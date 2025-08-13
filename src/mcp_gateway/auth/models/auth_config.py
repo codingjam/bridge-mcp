@@ -73,19 +73,6 @@ class AuthConfig(BaseModel):
         description="Time to live for JWKS cache in seconds (5 min to 24 hours)"
     )
     
-    # Token introspection settings (for revocation checking)
-    enable_token_introspection: bool = Field(
-        default=False,
-        description="Enable token introspection for real-time revocation checking"
-    )
-    
-    introspection_cache_ttl: int = Field(
-        default=300,
-        ge=60,
-        le=3600,
-        description="Time to live for introspection cache in seconds (1 min to 1 hour)"
-    )
-    
     # OBO (On-Behalf-Of) settings for service-to-service authentication
     enable_obo: bool = Field(
         default=True,
@@ -154,20 +141,6 @@ class AuthConfig(BaseModel):
             str: Complete token endpoint URL
         """
         return f"{self.keycloak_server_url}/realms/{self.realm}/protocol/openid-connect/token"
-    
-    @property
-    def introspection_endpoint(self) -> str:
-        """
-        Get the token introspection endpoint for the realm.
-        
-        This endpoint is used to check if tokens are still active
-        and have not been revoked. Only used when token introspection
-        is enabled.
-        
-        Returns:
-            str: Complete introspection endpoint URL
-        """
-        return f"{self.keycloak_server_url}/realms/{self.realm}/protocol/openid-connect/token/introspect"
     
     @property
     def issuer_url(self) -> str:

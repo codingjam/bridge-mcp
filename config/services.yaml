@@ -64,4 +64,3 @@ global:
   health_check_interval: 60  # seconds
   enable_service_discovery: false
   enable_health_checks: true
-  max_connections: 100

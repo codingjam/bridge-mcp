@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     
     # Authentication
     API_KEY_HEADER: str = Field(default="X-API-Key", description="API key header name")
-    SECRET_KEY: str = Field(default="", description="Secret key for JWT tokens")
     
     # OIDC Authentication with Keycloak
     ENABLE_AUTH: bool = Field(default=False, description="Enable OIDC authentication")
@@ -40,10 +39,6 @@ class Settings(BaseSettings):
     TOKEN_ISSUER: Optional[str] = Field(default=None, description="Expected token issuer")
     JWKS_CACHE_TTL: int = Field(default=3600, description="JWKS cache TTL in seconds")
     
-    # Token introspection settings
-    ENABLE_TOKEN_INTROSPECTION: bool = Field(default=False, description="Enable token introspection")
-    INTROSPECTION_CACHE_TTL: int = Field(default=300, description="Introspection cache TTL in seconds")
-    
     # OBO (On-Behalf-Of) settings
     ENABLE_OBO: bool = Field(default=True, description="Enable OAuth2 token exchange for OBO")
     OBO_CACHE_TTL: int = Field(default=1800, description="OBO token cache TTL in seconds")
@@ -52,36 +47,11 @@ class Settings(BaseSettings):
     CLOCK_SKEW_TOLERANCE: int = Field(default=300, description="Clock skew tolerance in seconds")
     REQUIRED_SCOPES: list[str] = Field(default_factory=list, description="Required scopes for gateway access")
     
-    # Redis (for rate limiting and caching)
-    REDIS_URL: Optional[str] = Field(default=None, description="Redis connection URL")
-    
     # Service registry
     SERVICE_REGISTRY_FILE: str = Field(
         default="config/services.yaml",
         description="Path to service registry configuration file"
     )
-    
-    # HTTP Client configuration for proxy
-    default_timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Default request timeout")
-    connect_timeout: float = Field(default=10.0, ge=1.0, le=60.0, description="Connection timeout")
-    read_timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Read timeout")
-    write_timeout: float = Field(default=10.0, ge=1.0, le=60.0, description="Write timeout")
-    pool_timeout: float = Field(default=5.0, ge=1.0, le=30.0, description="Pool timeout")
-    health_check_timeout: float = Field(default=5.0, ge=1.0, le=30.0, description="Health check timeout")
-    
-    # Connection pool settings
-    max_connections: int = Field(default=100, ge=1, le=1000, description="Max HTTP connections")
-    max_keepalive_connections: int = Field(default=20, ge=1, le=100, description="Max keepalive connections")
-    
-    # Security settings
-    allowed_hosts: list[str] = Field(default_factory=lambda: ["*"], description="Allowed host headers")
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"], description="CORS allowed origins")
-    max_request_size: int = Field(default=10 * 1024 * 1024, ge=1024, description="Max request size in bytes")  # 10MB
-    
-    # Rate limiting (future use)
-    enable_rate_limiting: bool = Field(default=False, description="Enable rate limiting")
-    rate_limit_requests: int = Field(default=100, ge=1, description="Requests per window")
-    rate_limit_window: int = Field(default=60, ge=1, description="Rate limit window in seconds")
     
     @field_validator('LOG_LEVEL')
     @classmethod
@@ -116,8 +86,6 @@ class Settings(BaseSettings):
             audience=self.TOKEN_AUDIENCE,
             issuer=self.TOKEN_ISSUER,
             jwks_cache_ttl=self.JWKS_CACHE_TTL,
-            enable_token_introspection=self.ENABLE_TOKEN_INTROSPECTION,
-            introspection_cache_ttl=self.INTROSPECTION_CACHE_TTL,
             enable_obo=self.ENABLE_OBO,
             obo_cache_ttl=self.OBO_CACHE_TTL,
             clock_skew_tolerance=self.CLOCK_SKEW_TOLERANCE,

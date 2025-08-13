@@ -23,7 +23,7 @@ class MCPService(BaseModel):
     endpoint: Union[HttpUrl, str] = Field(..., description="Service endpoint URL or command")
     transport: str = Field(default="http", pattern="^(http|stdio)$", description="Transport protocol")
     health_check_path: str = Field(default="/health", description="Health check endpoint path")
-    timeout: Optional[float] = Field(default=None, ge=0.1, le=300.0, description="Request timeout in seconds")
+    timeout: Optional[float] = Field(default=30.0, ge=0.1, le=300.0, description="Request timeout in seconds")
     enabled: bool = Field(default=True, description="Whether service is enabled")
     
     # HTTP-specific fields
@@ -67,31 +67,16 @@ class MCPService(BaseModel):
 
 
 class GlobalConfig(BaseModel):
-    """Global service configuration with production defaults"""
+    """Global service configuration with simple defaults"""
     
-    # Timeout settings (in seconds)
-    default_timeout: float = Field(default=30.0, ge=1.0, le=300.0)
-    connect_timeout: float = Field(default=10.0, ge=1.0, le=60.0)
-    read_timeout: float = Field(default=30.0, ge=1.0, le=300.0)
-    write_timeout: float = Field(default=10.0, ge=1.0, le=60.0)
-    pool_timeout: float = Field(default=5.0, ge=1.0, le=30.0)
-    health_check_timeout: float = Field(default=5.0, ge=1.0, le=30.0)
+    # Basic timeout settings
+    default_timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Default request timeout")
+    health_check_timeout: float = Field(default=5.0, ge=1.0, le=30.0, description="Health check timeout")
+    health_check_interval: int = Field(default=60, ge=10, le=3600, description="Health check interval in seconds")
     
-    # Connection pool settings
-    max_connections: int = Field(default=100, ge=1, le=1000)
-    max_keepalive_connections: int = Field(default=20, ge=1, le=100)
-    
-    # Health check settings
-    health_check_interval: int = Field(default=60, ge=10, le=3600, description="Seconds between health checks")
-    enable_health_checks: bool = Field(default=True, description="Enable automatic health checking")
-    
-    # Service discovery settings
+    # Service discovery
     enable_service_discovery: bool = Field(default=False, description="Enable dynamic service discovery")
-    
-    # Logging settings
-    enable_request_logging: bool = Field(default=True, description="Log all requests")
-    log_request_body: bool = Field(default=False, description="Include request body in logs (security risk)")
-    log_response_body: bool = Field(default=False, description="Include response body in logs (security risk)")
+    enable_health_checks: bool = Field(default=True, description="Enable periodic health checks")
     
     class Config:
         """Pydantic configuration"""
