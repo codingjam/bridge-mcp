@@ -1,0 +1,29 @@
+# MCP Gateway Service Registry Configuration
+# This file defines the MCP servers that the gateway can route requests to
+
+services:
+  # Example MCP server configuration
+  example-mcp-server:
+    name: "Example MCP Server"
+    description: "A sample MCP server for demonstration"
+    endpoint: "http://localhost:3000"
+    transport: "http"
+    health_check_path: "/health"
+    timeout: 30
+    enabled: true
+    
+  # Example stdio transport (for local MCP servers)
+  local-mcp-server:
+    name: "Local MCP Server"
+    description: "Local MCP server using stdio transport"
+    endpoint: "local-stdio-server"
+    transport: "stdio"
+    command: ["python", "-m", "my_mcp_server"]
+    working_directory: "/path/to/mcp/server"
+    enabled: false
+
+# Global service configuration
+global:
+  default_timeout: 30
+  health_check_interval: 60  # seconds
+  enable_service_discovery: false
