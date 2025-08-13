@@ -28,6 +28,30 @@ class Settings(BaseSettings):
     API_KEY_HEADER: str = Field(default="X-API-Key", description="API key header name")
     SECRET_KEY: str = Field(default="", description="Secret key for JWT tokens")
     
+    # OIDC Authentication with Keycloak
+    ENABLE_AUTH: bool = Field(default=False, description="Enable OIDC authentication")
+    KEYCLOAK_SERVER_URL: Optional[str] = Field(default=None, description="Keycloak server URL")
+    KEYCLOAK_REALM: str = Field(default="master", description="Keycloak realm")
+    KEYCLOAK_CLIENT_ID: str = Field(default="mcp-gateway", description="Keycloak client ID")
+    KEYCLOAK_CLIENT_SECRET: str = Field(default="", description="Keycloak client secret")
+    
+    # OIDC Token validation settings
+    TOKEN_AUDIENCE: Optional[str] = Field(default=None, description="Expected token audience")
+    TOKEN_ISSUER: Optional[str] = Field(default=None, description="Expected token issuer")
+    JWKS_CACHE_TTL: int = Field(default=3600, description="JWKS cache TTL in seconds")
+    
+    # Token introspection settings
+    ENABLE_TOKEN_INTROSPECTION: bool = Field(default=False, description="Enable token introspection")
+    INTROSPECTION_CACHE_TTL: int = Field(default=300, description="Introspection cache TTL in seconds")
+    
+    # OBO (On-Behalf-Of) settings
+    ENABLE_OBO: bool = Field(default=True, description="Enable OAuth2 token exchange for OBO")
+    OBO_CACHE_TTL: int = Field(default=1800, description="OBO token cache TTL in seconds")
+    
+    # Security settings
+    CLOCK_SKEW_TOLERANCE: int = Field(default=300, description="Clock skew tolerance in seconds")
+    REQUIRED_SCOPES: list[str] = Field(default_factory=list, description="Required scopes for gateway access")
+    
     # Redis (for rate limiting and caching)
     REDIS_URL: Optional[str] = Field(default=None, description="Redis connection URL")
     
@@ -76,6 +100,29 @@ class Settings(BaseSettings):
         if v.lower() not in valid_formats:
             raise ValueError(f"Log format must be one of {valid_formats}")
         return v.lower()
+    
+    def get_auth_config(self):
+        """Create AuthConfig from settings"""
+        if not self.ENABLE_AUTH or not self.KEYCLOAK_SERVER_URL:
+            return None
+        
+        from mcp_gateway.auth.models import AuthConfig
+        
+        return AuthConfig(
+            keycloak_server_url=self.KEYCLOAK_SERVER_URL,
+            realm=self.KEYCLOAK_REALM,
+            client_id=self.KEYCLOAK_CLIENT_ID,
+            client_secret=self.KEYCLOAK_CLIENT_SECRET,
+            audience=self.TOKEN_AUDIENCE,
+            issuer=self.TOKEN_ISSUER,
+            jwks_cache_ttl=self.JWKS_CACHE_TTL,
+            enable_token_introspection=self.ENABLE_TOKEN_INTROSPECTION,
+            introspection_cache_ttl=self.INTROSPECTION_CACHE_TTL,
+            enable_obo=self.ENABLE_OBO,
+            obo_cache_ttl=self.OBO_CACHE_TTL,
+            clock_skew_tolerance=self.CLOCK_SKEW_TOLERANCE,
+            required_scopes=self.REQUIRED_SCOPES
+        )
 
 
 # Global settings instance

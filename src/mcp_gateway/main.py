@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from mcp_gateway.api.routes import router
 from mcp_gateway.core.config import settings, get_settings
 from mcp_gateway.core.logging import setup_logging
+from mcp_gateway.auth.middleware import AuthenticationMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,21 @@ def create_app() -> FastAPI:
         ]
     )
     
+    # Add authentication middleware if enabled
+    auth_config = settings.get_auth_config()
+    if auth_config:
+        logger.info(
+            "Adding authentication middleware",
+            extra={
+                "keycloak_realm": auth_config.realm,
+                "enable_obo": auth_config.enable_obo,
+                "required_scopes": auth_config.required_scopes
+            }
+        )
+        app.add_middleware(AuthenticationMiddleware, auth_config=auth_config)
+    else:
+        logger.warning("Authentication is disabled - running in insecure mode")
+    
     # Add security middleware
     app.add_middleware(
         TrustedHostMiddleware,
@@ -147,6 +163,11 @@ def create_app() -> FastAPI:
             "version": "0.1.0", 
             "status": "running",
             "description": "Model Context Protocol Gateway for secure AI model interactions",
+            "authentication": {
+                "enabled": settings.ENABLE_AUTH,
+                "realm": settings.KEYCLOAK_REALM if settings.ENABLE_AUTH else None,
+                "oidc_endpoint": f"{settings.KEYCLOAK_SERVER_URL}/realms/{settings.KEYCLOAK_REALM}" if settings.ENABLE_AUTH and settings.KEYCLOAK_SERVER_URL else None
+            },
             "api": {
                 "version": "v1",
                 "base_url": "/api/v1"
