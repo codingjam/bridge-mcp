@@ -22,22 +22,14 @@ logger = logging.getLogger(__name__)
 # Create API router
 router = APIRouter()
 
-# Global registry and OBO service instances (will be properly injected in production)
-_registry: Optional[ServiceRegistry] = None
-_obo_service: Optional[OBOTokenService] = None
-
 
 async def get_service_registry() -> ServiceRegistry:
     """
     Dependency injection for service registry
-    This ensures a singleton pattern and proper lifecycle management
+    Import here to avoid circular dependency
     """
-    global _registry
-    if _registry is None:
-        settings = get_settings()
-        _registry = ServiceRegistry(Path(settings.SERVICE_REGISTRY_FILE))
-        await _registry.load_services()
-    return _registry
+    from mcp_gateway.main import get_service_registry as get_registry
+    return await get_registry()
 
 
 async def get_obo_service() -> Optional[OBOTokenService]:
@@ -45,13 +37,11 @@ async def get_obo_service() -> Optional[OBOTokenService]:
     Dependency injection for OBO service
     Returns OBO service if authentication is enabled
     """
-    global _obo_service
-    if _obo_service is None:
-        settings = get_settings()
-        auth_config = settings.get_auth_config()
-        if auth_config and auth_config.enable_obo:
-            _obo_service = OBOTokenService(auth_config)
-    return _obo_service
+    settings = get_settings()
+    auth_config = settings.get_auth_config()
+    if auth_config and auth_config.enable_obo:
+        return OBOTokenService(auth_config)
+    return None
 
 
 async def get_proxy_service(
@@ -415,13 +405,23 @@ async def mcp_call(
     user_token = get_access_token(request)
     user_claims = getattr(request.state, 'token_claims', None)
     
-    # Create service auth configuration for MCP calls
-    service_auth = MCPServiceAuth(
-        service_id=service_id,
-        auth_strategy=AuthStrategy.OBO_REQUIRED if user else AuthStrategy.NO_AUTH,
-        required_scopes=["mcp:call"],  # MCP-specific scope
-        custom_headers={}
-    )
+    # Get service authentication configuration from registry
+    service_auth = await registry.get_service_auth(service_id)
+    if not service_auth:
+        # Fallback to default auth configuration for MCP calls
+        service_auth = MCPServiceAuth(
+            service_id=service_id,
+            auth_strategy=AuthStrategy.NO_AUTH,  # Default to no auth if not configured
+            required_scopes=[],
+            custom_headers={}
+        )
+        logger.warning(
+            f"No auth configuration found for service {service_id}, using default (no auth)"
+        )
+    
+    # Override scopes for MCP calls if not already specified
+    if not service_auth.required_scopes:
+        service_auth.required_scopes = ["mcp:call"]
     
     try:
         body = await request.body()

@@ -15,9 +15,37 @@ from fastapi.responses import JSONResponse
 from mcp_gateway.api.routes import router
 from mcp_gateway.core.config import settings, get_settings
 from mcp_gateway.core.logging import setup_logging
+from mcp_gateway.core.service_registry import ServiceRegistry
 from mcp_gateway.auth.authentication_middleware import AuthenticationMiddleware
 
 logger = logging.getLogger(__name__)
+
+# Global service registry instance
+_service_registry: Optional[ServiceRegistry] = None
+
+
+async def get_service_registry() -> ServiceRegistry:
+    """Get the global service registry instance (for dependency injection)"""
+    global _service_registry
+    if _service_registry is None:
+        raise RuntimeError("Service registry not initialized")
+    return _service_registry
+
+
+async def create_service_registry() -> ServiceRegistry:
+    """Create and initialize the service registry"""
+    from pathlib import Path
+    
+    auth_config = settings.get_auth_config()
+    registry = ServiceRegistry(
+        config_path=Path(settings.SERVICE_REGISTRY_FILE),
+        auth_config=auth_config
+    )
+    
+    # Load services and authentication configurations
+    await registry.load_services()
+    
+    return registry
 
 
 @asynccontextmanager
@@ -29,6 +57,15 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting MCP Gateway...")
     
+    # Initialize service registry
+    global _service_registry
+    try:
+        _service_registry = await create_service_registry()
+        logger.info("Service registry initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize service registry: {e}")
+        raise
+    
     logger.info(
         "Gateway configuration",
         extra={
@@ -37,7 +74,9 @@ async def lifespan(app: FastAPI):
             "debug": settings.DEBUG,
             "log_level": settings.LOG_LEVEL,
             "max_connections": settings.max_connections,
-            "default_timeout": settings.default_timeout
+            "default_timeout": settings.default_timeout,
+            "service_registry_file": settings.SERVICE_REGISTRY_FILE,
+            "auth_enabled": settings.ENABLE_AUTH
         }
     )
     
@@ -45,6 +84,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down MCP Gateway...")
+    _service_registry = None
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError):

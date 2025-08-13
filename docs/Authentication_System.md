@@ -116,11 +116,13 @@ services:
     name: "My MCP Service"
     transport: "http"
     endpoint: "https://my-service.com"
-    authentication:
-      service_id: "my-service"
+    enabled: true
+    auth:
+      strategy: "obo_required"  # Options: no_auth, passthrough, obo_preferred, obo_required
       target_audience: "my-service"
       required_scopes: ["mcp:call"]
-      auth_strategy: "obo_required"  # Options: none, passthrough_only, obo_preferred, obo_required
+      custom_headers:
+        "X-Service-Name": "mcp-gateway"
 ```
 
 ## Security Features
@@ -143,22 +145,93 @@ services:
 - Detailed logging for debugging
 - Graceful degradation on service failures
 
+## Service Registry Integration
+
+### Configuration-Driven Authentication
+
+The ServiceRegistry now serves as the central bridge between YAML configuration and the authentication system, providing configuration-driven authentication strategies per service:
+
+```python
+# Service Registry loads authentication configurations from YAML
+from mcp_gateway.core.service_registry import ServiceRegistry
+from mcp_gateway.auth.models import AuthStrategy
+
+# Initialize registry with authentication support
+registry = ServiceRegistry(config_path=Path("config/services.yaml"), auth_config=auth_config)
+await registry.load_services()
+
+# Get service authentication configuration
+auth_config = await registry.get_service_auth("my-service")
+if auth_config.auth_strategy == AuthStrategy.OBO_REQUIRED:
+    # Use OBO token exchange
+    pass
+elif auth_config.auth_strategy == AuthStrategy.PASSTHROUGH:
+    # Pass user token directly
+    pass
+```
+
+### Authentication Strategies
+
+The system supports four authentication strategies defined in the `AuthStrategy` enum:
+
+- **`NO_AUTH`**: No authentication required (public services)
+- **`PASSTHROUGH`**: Pass user token directly to service
+- **`OBO_PREFERRED`**: Use OBO if available, fallback to passthrough
+- **`OBO_REQUIRED`**: Always use OBO token exchange (fails if unavailable)
+
+### Service-Specific Configuration
+
+Each service can have its own authentication configuration:
+
+```yaml
+services:
+  secure-analytics:
+    auth:
+      strategy: "obo_required"
+      target_audience: "analytics-api"
+      required_scopes: ["analytics:read", "mcp:call"]
+      custom_headers:
+        "X-Service-Name": "mcp-gateway"
+        "X-Version": "1.0.0"
+        
+  legacy-service:
+    auth:
+      strategy: "passthrough"
+      required_scopes: ["legacy:access"]
+      custom_headers:
+        "X-Gateway": "mcp-gateway"
+```
+
 ## API Integration
 
 ### Dependency Injection
 
 ```python
 from mcp_gateway.auth.authentication_middleware import get_current_user, require_authentication
+from mcp_gateway.core.service_registry import ServiceRegistry
 
 @router.get("/protected-endpoint")
-async def protected_endpoint(user: UserContext = Depends(require_authentication)):
+async def protected_endpoint(
+    user: UserContext = Depends(require_authentication),
+    registry: ServiceRegistry = Depends(get_service_registry)
+):
     return {"user_id": user.user_id, "scopes": user.scopes}
 
-@router.get("/optional-auth")
-async def optional_auth(user: Optional[UserContext] = Depends(get_current_user)):
-    if user:
-        return {"authenticated": True, "user_id": user.user_id}
-    return {"authenticated": False}
+@router.get("/services/{service_id}")
+async def get_service_detail(
+    service_id: str,
+    registry: ServiceRegistry = Depends(get_service_registry)
+):
+    service = await registry.get_service(service_id)
+    auth_config = await registry.get_service_auth(service_id)
+    
+    return {
+        "service": service,
+        "auth": {
+            "strategy": auth_config.auth_strategy,
+            "requires_obo": auth_config.auth_strategy in [AuthStrategy.OBO_REQUIRED, AuthStrategy.OBO_PREFERRED]
+        }
+    }
 ```
 
 ### Request Context

@@ -9,6 +9,9 @@ from typing import Dict, List, Optional, Union
 import yaml
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
+# Import authentication models
+from ..auth.models import MCPServiceAuth, AuthStrategy
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +37,9 @@ class MCPService(BaseModel):
     # Service metadata
     version: Optional[str] = Field(default=None, description="Service version")
     tags: List[str] = Field(default_factory=list, description="Service tags for categorization")
+    
+    # Authentication configuration (raw YAML data)
+    auth: Optional[Dict] = Field(default=None, description="Authentication configuration")
     
     @model_validator(mode='after')
     def validate_transport_config(self):
@@ -96,11 +102,13 @@ class GlobalConfig(BaseModel):
 class ServiceRegistry:
     """Registry for managing MCP services with validation and lifecycle management"""
     
-    def __init__(self, config_path: Optional[Path] = None):
+    def __init__(self, config_path: Optional[Path] = None, auth_config=None):
         self.config_path = config_path or Path("config/services.yaml")
+        self.auth_config = auth_config  # Global auth configuration
         self.services: Dict[str, MCPService] = {}
         self.global_config = GlobalConfig()
         self._health_status: Dict[str, bool] = {}
+        self._service_auth_configs: Dict[str, MCPServiceAuth] = {}
         
     async def load_services(self) -> None:
         """
@@ -145,6 +153,10 @@ class ServiceRegistry:
                         service = MCPService(**service_config)
                         self.services[service_id] = service
                         self._health_status[service_id] = True  # Assume healthy initially
+                        
+                        # Load authentication configuration for this service
+                        await self._load_service_auth_config(service_id, service)
+                        
                         loaded_count += 1
                         
                         logger.info(
@@ -153,7 +165,8 @@ class ServiceRegistry:
                                 "service_id": service_id,
                                 "name": service.name,
                                 "transport": service.transport,
-                                "enabled": service.enabled
+                                "enabled": service.enabled,
+                                "has_auth": service_id in self._service_auth_configs
                             }
                         )
                     except Exception as e:
@@ -161,6 +174,7 @@ class ServiceRegistry:
                         continue
                 
                 logger.info(f"Successfully loaded {loaded_count} MCP services")
+                logger.info(f"Loaded authentication configs for {len(self._service_auth_configs)} services")
             else:
                 logger.warning("No services section found in configuration")
             
@@ -171,7 +185,127 @@ class ServiceRegistry:
             logger.error(f"Failed to load service registry: {e}")
             raise
     
+    async def _load_service_auth_config(self, service_id: str, service: MCPService) -> None:
+        """
+        Load authentication configuration for a specific service.
+        
+        Args:
+            service_id: The service identifier
+            service: The service configuration object
+        """
+        if not service.auth:
+            # No auth configuration - use default (no auth)
+            self._service_auth_configs[service_id] = MCPServiceAuth(
+                service_id=service_id,
+                auth_strategy=AuthStrategy.NO_AUTH
+            )
+            return
+        
+        try:
+            auth_config = service.auth
+            
+            # Extract auth strategy (with fallback to no_auth)
+            strategy_str = auth_config.get("strategy", "no_auth")
+            try:
+                auth_strategy = AuthStrategy(strategy_str)
+            except ValueError:
+                logger.warning(f"Invalid auth strategy '{strategy_str}' for service {service_id}, using no_auth")
+                auth_strategy = AuthStrategy.NO_AUTH
+            
+            # Create MCPServiceAuth object
+            service_auth = MCPServiceAuth(
+                service_id=service_id,
+                auth_strategy=auth_strategy,
+                target_audience=auth_config.get("target_audience"),
+                required_scopes=auth_config.get("required_scopes", []),
+                custom_headers=auth_config.get("custom_headers", {}),
+                obo_client_id=auth_config.get("obo_client_id"),
+                obo_client_secret=auth_config.get("obo_client_secret")
+            )
+            
+            self._service_auth_configs[service_id] = service_auth
+            
+            logger.info(
+                f"Loaded auth config for service {service_id}",
+                extra={
+                    "service_id": service_id,
+                    "auth_strategy": auth_strategy.value,
+                    "target_audience": service_auth.target_audience,
+                    "has_custom_headers": bool(service_auth.custom_headers),
+                    "required_scopes_count": len(service_auth.required_scopes)
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to load auth config for service {service_id}: {e}")
+            # Fallback to no auth
+            self._service_auth_configs[service_id] = MCPServiceAuth(
+                service_id=service_id,
+                auth_strategy=AuthStrategy.NO_AUTH
+            )
+    
     async def get_service(self, service_id: str) -> Optional[MCPService]:
+        """Get service by ID with validation"""
+        if not service_id:
+            return None
+        return self.services.get(service_id)
+    
+    async def get_service_auth(self, service_id: str) -> Optional[MCPServiceAuth]:
+        """
+        Get authentication configuration for a specific service.
+        
+        Args:
+            service_id: The service identifier
+            
+        Returns:
+            MCPServiceAuth object if found, None otherwise
+        """
+        return self._service_auth_configs.get(service_id)
+    
+    async def get_all_service_auth_configs(self) -> Dict[str, MCPServiceAuth]:
+        """Get all service authentication configurations (copy to prevent modification)"""
+        return self._service_auth_configs.copy()
+    
+    async def get_services_with_auth_strategy(self, strategy: AuthStrategy) -> Dict[str, MCPService]:
+        """
+        Get services that use a specific authentication strategy.
+        
+        Args:
+            strategy: The authentication strategy to filter by
+            
+        Returns:
+            Dictionary of service_id -> MCPService for services using the strategy
+        """
+        matching_services = {}
+        for service_id, auth_config in self._service_auth_configs.items():
+            if auth_config.auth_strategy == strategy and service_id in self.services:
+                service = self.services[service_id]
+                if service.enabled:
+                    matching_services[service_id] = service
+        return matching_services
+    
+    async def update_service_auth(self, service_id: str, auth_config: MCPServiceAuth) -> bool:
+        """
+        Update authentication configuration for a service (for dynamic updates).
+        
+        Args:
+            service_id: The service identifier
+            auth_config: New authentication configuration
+            
+        Returns:
+            True if updated successfully, False if service not found
+        """
+        if service_id in self.services:
+            self._service_auth_configs[service_id] = auth_config
+            logger.info(
+                f"Updated auth config for service {service_id}",
+                extra={
+                    "service_id": service_id,
+                    "auth_strategy": auth_config.auth_strategy.value
+                }
+            )
+            return True
+        return False
         """Get service by ID with validation"""
         if not service_id:
             return None
@@ -263,7 +397,7 @@ class ServiceRegistry:
         return self.global_config
     
     async def _create_default_config(self) -> None:
-        """Create a default configuration file"""
+        """Create a default configuration file with authentication examples"""
         default_config = {
             'global': {
                 'default_timeout': 30.0,
@@ -278,7 +412,41 @@ class ServiceRegistry:
                     'endpoint': 'http://localhost:3000',
                     'transport': 'http',
                     'enabled': True,
-                    'tags': ['example', 'test']
+                    'tags': ['example', 'test'],
+                    'auth': {
+                        'strategy': 'no_auth'
+                    }
+                },
+                'secure-analytics-server': {
+                    'name': 'Secure Analytics Server',
+                    'description': 'Analytics server requiring OBO authentication',
+                    'endpoint': 'https://analytics.company.com',
+                    'transport': 'http',
+                    'enabled': False,  # Disabled by default
+                    'tags': ['analytics', 'secure'],
+                    'auth': {
+                        'strategy': 'obo_required',
+                        'target_audience': 'analytics-api',
+                        'required_scopes': ['analytics:read', 'analytics:write'],
+                        'custom_headers': {
+                            'X-Service-Name': 'mcp-gateway',
+                            'X-Version': '1.0.0'
+                        }
+                    }
+                },
+                'legacy-passthrough-server': {
+                    'name': 'Legacy Passthrough Server',
+                    'description': 'Legacy server that accepts user tokens directly',
+                    'endpoint': 'https://legacy.company.com',
+                    'transport': 'http',
+                    'enabled': False,  # Disabled by default
+                    'tags': ['legacy'],
+                    'auth': {
+                        'strategy': 'passthrough',
+                        'custom_headers': {
+                            'X-Gateway': 'mcp-gateway'
+                        }
+                    }
                 }
             }
         }
@@ -289,4 +457,4 @@ class ServiceRegistry:
         with open(self.config_path, 'w', encoding='utf-8') as f:
             yaml.dump(default_config, f, default_flow_style=False, indent=2)
         
-        logger.info(f"Created default configuration at {self.config_path}")
+        logger.info(f"Created default configuration with auth examples at {self.config_path}")
