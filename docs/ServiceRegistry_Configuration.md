@@ -54,7 +54,6 @@ global:
   health_check_interval: 60
   enable_service_discovery: false
   enable_health_checks: true
-  max_connections: 100
 ```
 
 ## Authentication Strategies
@@ -338,7 +337,6 @@ services:
 1. **Health checks**: Configure appropriate health check intervals
 2. **Timeouts**: Set reasonable timeouts for each service
 3. **Caching**: Use token caching for frequently accessed services
-4. **Connection pooling**: Configure appropriate connection limits
 
 ### Monitoring
 1. **Service metrics**: Monitor service health and response times

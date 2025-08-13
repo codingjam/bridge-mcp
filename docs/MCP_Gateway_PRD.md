@@ -71,11 +71,11 @@ The goal is to design and implement an open-source MCP (Model Context Protocol) 
 - <span style="color: green">**✅ Create Docker containerization and basic deployment documentation**</span>
 
 **Recent Major Accomplishments:**
-- ✅ **Complete OIDC Authentication System** with Keycloak, JWT validation, and token introspection
+- ✅ **Complete OIDC Authentication System** with Keycloak and JWT validation
 - ✅ **OAuth2 On-Behalf-Of Flow** with automatic token exchange and caching
 - ✅ **ServiceRegistry Integration** bridging YAML configuration with authentication models
 - ✅ **Configuration-Driven Authentication** supporting multiple strategies per service (NO_AUTH, PASSTHROUGH, OBO_PREFERRED, OBO_REQUIRED)
-- ✅ **Production-grade HTTP proxy** with connection pooling, timeout handling, and error management
+- ✅ **Production-grade HTTP proxy** with timeout handling and error management
 - ✅ **Comprehensive API endpoints** (`/services`, `/proxy`, `/mcp`, `/health`)
 - ✅ **Service registry validation** with Pydantic V2 models and cross-field validation
 - ✅ **Health monitoring** with real-time service status checking
@@ -84,7 +84,7 @@ The goal is to design and implement an open-source MCP (Model Context Protocol) 
 
 **Deliverables:**
 - <span style="color: green">**✅ Working gateway that can proxy MCP calls to registered servers**</span> *(Full HTTP proxy with error handling and validation)*
-- <span style="color: green">**✅ Complete OIDC authentication with Keycloak integration**</span> *(JWT validation, token introspection, OBO flow)*
+- <span style="color: green">**✅ Complete OIDC authentication with Keycloak integration**</span> *(JWT validation and OBO flow)*
 - <span style="color: green">**✅ ServiceRegistry with configuration-driven authentication**</span> *(YAML-based auth strategies per service)*
 - <span style="color: green">**✅ Container deployment with docker-compose example**</span>
 - <span style="color: green">**✅ Comprehensive project documentation and README**</span>

@@ -156,7 +156,7 @@ curl -X POST "http://localhost:8000/api/v1/proxy/my-mcp-service/some-endpoint" \
 
 - Use HTTPS for all communications
 - Configure appropriate token lifetimes in Keycloak
-- Enable token introspection for real-time revocation checking
+- Enable real-time token validation using JWT signature verification
 - Use secure storage for client secrets
 
 ### 2. Network Security

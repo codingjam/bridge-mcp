@@ -17,7 +17,6 @@ This document provides a comprehensive overview of the OIDC authentication syste
 2. **TokenValidator** (`auth/token_validator.py`)
    - Validates JWT tokens using Keycloak's JWKS endpoint
    - Supports signature verification and claim validation
-   - Optional token introspection for revocation checking
    - Implements caching for performance optimization
 
 3. **OBOTokenService** (`auth/obo_service.py`)
@@ -63,7 +62,6 @@ Client Request → Authentication Middleware → Token Validation → User Conte
    - Fetches JWKS keys from Keycloak
    - Verifies JWT signature
    - Validates standard claims (exp, iss, aud, etc.)
-   - Optional introspection for revocation checking
 4. Creates UserContext from validated claims
 5. Continues to route handler or returns 401 on failure
 
@@ -131,11 +129,9 @@ services:
 - JWT signature validation using RS256/ES256 algorithms
 - Standard claim validation (exp, iss, aud, nbf)
 - Clock skew tolerance for distributed systems
-- Optional token introspection for real-time revocation
 
 ### Caching Strategy
 - JWKS keys cached with configurable TTL
-- Introspection results cached to reduce load
 - OBO tokens cached with expiration handling
 - Automatic cleanup of expired cache entries
 
@@ -282,7 +278,7 @@ claims = request.state.token_claims  # Parsed token claims
 ### Performance
 - Implement Redis for distributed caching
 - Monitor and tune cache TTL values
-- Use connection pooling for HTTP clients
+- Configure appropriate HTTP client settings for network resilience
 - Optimize JWKS refresh frequency
 
 ### Security
