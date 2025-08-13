@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 from .proxy import MCPProxyService as BaseMCPProxyService
 from ..auth.obo_service import OBOTokenService
-from ..auth.models import TokenClaims, MCPServiceAuth, AuthStrategy
+from mcp_gateway.auth.models import TokenClaims, MCPServiceAuth, AuthStrategy
 
 logger = logging.getLogger(__name__)
 

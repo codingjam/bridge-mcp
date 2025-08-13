@@ -13,7 +13,7 @@ from mcp_gateway.core.config import get_settings
 from mcp_gateway.core.proxy import MCPProxyService
 from mcp_gateway.core.authenticated_proxy import AuthenticatedMCPProxyService
 from mcp_gateway.core.service_registry import ServiceRegistry
-from mcp_gateway.auth.middleware import get_current_user, get_access_token
+from mcp_gateway.auth.authentication_middleware import get_current_user, get_access_token
 from mcp_gateway.auth.models import UserContext, MCPServiceAuth, AuthStrategy
 from mcp_gateway.auth.obo_service import OBOTokenService
 

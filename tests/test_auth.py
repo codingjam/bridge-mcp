@@ -23,7 +23,7 @@ from mcp_gateway.auth.models import (
 )
 from mcp_gateway.auth.token_validator import TokenValidator
 from mcp_gateway.auth.obo_service import OBOTokenService
-from mcp_gateway.auth.middleware import AuthenticationMiddleware
+from mcp_gateway.auth.authentication_middleware import AuthenticationMiddleware
 from mcp_gateway.auth.exceptions import (
     TokenValidationError,
     TokenExchangeError,

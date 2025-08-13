@@ -5,7 +5,7 @@ This module provides OIDC authentication with Keycloak integration,
 including token validation, On-Behalf-Of (OBO) flow, and security middleware.
 """
 
-from .middleware import AuthenticationMiddleware
+from .authentication_middleware import AuthenticationMiddleware
 from .token_validator import TokenValidator
 from .obo_service import OBOTokenService
 from .models import AuthConfig, UserContext, TokenClaims

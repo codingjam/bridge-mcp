@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from mcp_gateway.api.routes import router
 from mcp_gateway.core.config import settings, get_settings
 from mcp_gateway.core.logging import setup_logging
-from mcp_gateway.auth.middleware import AuthenticationMiddleware
+from mcp_gateway.auth.authentication_middleware import AuthenticationMiddleware
 
 logger = logging.getLogger(__name__)
 

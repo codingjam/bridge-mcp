@@ -148,7 +148,7 @@ services:
 ### Dependency Injection
 
 ```python
-from mcp_gateway.auth.middleware import get_current_user, require_authentication
+from mcp_gateway.auth.authentication_middleware import get_current_user, require_authentication
 
 @router.get("/protected-endpoint")
 async def protected_endpoint(user: UserContext = Depends(require_authentication)):
