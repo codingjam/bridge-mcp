@@ -1,7 +1,13 @@
 """
 JWT token validation service for OIDC authentication.
 
-This module provides comprehensive JWT token validation including
+This         logger.info(
+            "TokenValidator initialized",
+            extra={
+                "realm": self.config.realm,
+                "jwks_uri": self.config.jwks_uri
+            }
+        )rovides comprehensive JWT token validation including
 signature verification using JWKS, claim validation, and optional
 token introspection for revocation checking.
 """
@@ -69,8 +75,7 @@ class TokenValidator:
             "Token validator initialized",
             extra={
                 "realm": self.config.realm,
-                "jwks_uri": self.config.jwks_uri,
-                "introspection_enabled": self.config.enable_token_introspection
+                "jwks_uri": self.config.jwks_uri
             }
         )
     
@@ -110,11 +115,7 @@ class TokenValidator:
             # Step 3: Validate standard claims
             await self._validate_claims(claims)
             
-            # Step 4: Optional token introspection for revocation checking
-            if self.config.enable_token_introspection:
-                await self._validate_introspection(token)
-            
-            # Step 5: Parse claims into structured model
+            # Step 4: Parse claims into structured model
             token_claims = TokenClaims(**claims)
             
             # Step 6: Validate required scopes
