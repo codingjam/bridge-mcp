@@ -69,7 +69,12 @@ Accept: application/json
       "healthy": true,
       "endpoint": "http://localhost:3001",
       "tags": ["filesystem", "tools"],
-      "version": "1.2.0"
+      "version": "1.2.0",
+      "auth": {
+        "strategy": "obo_required",
+        "requires_obo": true,
+        "target_audience": "filesystem-api"
+      }
     },
     "database": {
       "id": "database", 
@@ -80,7 +85,12 @@ Accept: application/json
       "healthy": true,
       "endpoint": "http://localhost:3002",
       "tags": ["database", "sql"],
-      "version": "2.1.0"
+      "version": "2.1.0",
+      "auth": {
+        "strategy": "obo_required",
+        "requires_obo": true,
+        "target_audience": "database-api"
+      }
     },
     "web-search": {
       "id": "web-search",
@@ -91,7 +101,11 @@ Accept: application/json
       "healthy": true,
       "endpoint": "http://localhost:3003",
       "tags": ["search", "web"],
-      "version": "1.0.5"
+      "version": "1.0.5",
+      "auth": {
+        "strategy": "passthrough",
+        "requires_obo": false
+      }
     }
   }
 }
@@ -454,9 +468,63 @@ except httpx.HTTPStatusError as e:
         print(f"Error: {e.response.json()['detail']}")
 ```
 
+### Service Authentication Awareness
+
+Your agent should be aware of different authentication strategies:
+
+```python
+async def handle_service_auth(gateway: MCPGatewayClient, service_id: str):
+    services_data = await gateway.discover_services()
+    service = services_data["services"].get(service_id)
+    
+    if not service:
+        raise ValueError(f"Service {service_id} not found")
+    
+    auth_info = service.get("auth", {})
+    strategy = auth_info.get("strategy", "no_auth")
+    
+    if strategy == "obo_required":
+        # Service requires On-Behalf-Of token exchange
+        # Gateway handles this automatically if user token is valid
+        print(f"Service {service_id} requires OBO authentication")
+    elif strategy == "passthrough":
+        # User token passed directly to service
+        print(f"Service {service_id} uses token passthrough")
+    elif strategy == "no_auth":
+        # No authentication required
+        print(f"Service {service_id} is public")
+    
+    return strategy
+
+# Example usage
+strategy = await handle_service_auth(gateway, "filesystem")
+result = await gateway.call_tool("filesystem", "read_file", path="/tmp/test.txt")
+```
+
 ## Advanced Features
 
-### Service Filtering
+### Service Authentication Strategies
+
+Filter services by authentication requirements:
+
+```python
+async def get_services_by_auth_strategy(gateway: MCPGatewayClient, strategy: str):
+    services_data = await gateway.discover_services()
+    
+    matching_services = {}
+    for service_id, service in services_data["services"].items():
+        auth_info = service.get("auth", {})
+        if auth_info.get("strategy") == strategy:
+            matching_services[service_id] = service
+    
+    return matching_services
+
+# Get all public services (no authentication required)
+public_services = await get_services_by_auth_strategy(gateway, "no_auth")
+
+# Get services that require OBO
+secure_services = await get_services_by_auth_strategy(gateway, "obo_required")
+```
 
 Filter services by tags, transport, or health status:
 
@@ -535,15 +603,30 @@ gateway = MCPGatewayClient("https://mcp-gateway.your-company.com")
 gateway = MCPGatewayClient("http://mcp-gateway:8000")
 ```
 
-### Authentication (Future)
+### Authentication (When Enabled)
 
-When authentication is implemented, you'll add headers:
+When authentication is enabled, you'll need to provide a valid Bearer token:
 
 ```python
 class AuthenticatedMCPGatewayClient(MCPGatewayClient):
-    def __init__(self, gateway_url: str, api_key: str):
+    def __init__(self, gateway_url: str, access_token: str):
         super().__init__(gateway_url)
-        self.client.headers.update({"X-API-Key": api_key})
+        self.client.headers.update({
+            "Authorization": f"Bearer {access_token}"
+        })
+
+# Usage with OIDC token
+gateway = AuthenticatedMCPGatewayClient(
+    "http://localhost:8000",
+    "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+)
+```
+
+The gateway supports different authentication strategies per service:
+- **NO_AUTH**: Public services, no authentication required
+- **PASSTHROUGH**: User token forwarded directly to service
+- **OBO_PREFERRED**: Gateway attempts On-Behalf-Of token exchange, falls back to passthrough
+- **OBO_REQUIRED**: Gateway performs On-Behalf-Of token exchange (secure services)
 ```
 
 ## Troubleshooting
