@@ -33,14 +33,23 @@ async def get_service_registry() -> ServiceRegistry:
     """
     try:
         from mcp_gateway.main import get_service_registry as get_registry
-        return await get_registry()
-    except RuntimeError:
+        registry = await get_registry()
+        return registry
+    except RuntimeError as e:
+        logger.error(f"Service registry not initialized: {e}")
         # Service registry not initialized - return a mock registry for testing
         # In production, this would be handled by proper initialization order
         from mcp_gateway.core.service_registry import ServiceRegistry
+        from pathlib import Path
         
-        # Create a mock registry with sample data for dashboard testing
-        mock_registry = ServiceRegistry()
+        # Create a temporary registry and load services
+        mock_registry = ServiceRegistry(config_path=Path("config/services.yaml"))
+        try:
+            await mock_registry.load_services()
+            logger.info(f"Loaded {len(await mock_registry.get_all_services())} services from config")
+        except Exception as load_error:
+            logger.error(f"Failed to load services in mock registry: {load_error}")
+        
         return mock_registry
 
 

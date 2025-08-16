@@ -471,5 +471,28 @@ export const Typography = {
   ),
 };
 
+// Tag Component
+export const Tag: React.FC<{
+  children: React.ReactNode;
+  color?: string;
+  size?: 'default' | 'small';
+  className?: string;
+}> = ({ children, color, size = 'default', className }) => {
+  const colorClass = color === 'green' ? 'bg-green-100 text-green-800' :
+                    color === 'red' ? 'bg-red-100 text-red-800' :
+                    color === 'blue' ? 'bg-blue-100 text-blue-800' :
+                    color === 'purple' ? 'bg-purple-100 text-purple-800' :
+                    color === 'gray' ? 'bg-gray-100 text-gray-800' :
+                    'bg-gray-100 text-gray-800';
+  
+  const sizeClass = size === 'small' ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-0.5 text-sm';
+  
+  return (
+    <span className={`inline-flex items-center rounded-full font-medium ${colorClass} ${sizeClass} ${className || ''}`}>
+      {children}
+    </span>
+  );
+};
+
 // Re-export types for convenience
 export type { ButtonProps, CardProps, TableProps, TableColumn } from './types';

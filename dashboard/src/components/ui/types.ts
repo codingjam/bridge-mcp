@@ -50,6 +50,7 @@ export interface PaginationProps {
   total?: number;
   showSizeChanger?: boolean;
   showQuickJumper?: boolean;
+  showTotal?: (total: number, range: [number, number]) => string;
   onChange?: (page: number, pageSize: number) => void;
 }
 

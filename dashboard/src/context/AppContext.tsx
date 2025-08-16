@@ -26,6 +26,8 @@ interface AppContextType {
   setNotifications: (notifications: Notification[]) => void;
   theme: 'light' | 'dark';
   setTheme: (theme: 'light' | 'dark') => void;
+  currentPage: string;
+  setCurrentPage: (page: string) => void;
 }
 
 export const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -38,6 +40,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     role: 'Administrator'
   });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [currentPage, setCurrentPage] = useState('overview');
   const [notifications, setNotifications] = useState<Notification[]>([
     {
       id: '1',
@@ -64,6 +67,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUser,
       sidebarCollapsed,
       setSidebarCollapsed,
+      currentPage,
+      setCurrentPage,
       notifications,
       setNotifications,
       theme,

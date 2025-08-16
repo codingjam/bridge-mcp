@@ -17,7 +17,7 @@ export const Sidebar: React.FC = () => {
     throw new Error('Sidebar must be used within AppProvider');
   }
   
-  const { sidebarCollapsed } = context;
+  const { sidebarCollapsed, currentPage, setCurrentPage } = context;
 
   const menuItems: MenuItem[] = [
     {
@@ -58,8 +58,7 @@ export const Sidebar: React.FC = () => {
   ];
 
   const handleMenuClick = (info: { key: string }) => {
-    console.log('Menu clicked:', info.key);
-    // TODO: Implement navigation
+    setCurrentPage(info.key);
   };
 
   return (
@@ -85,7 +84,7 @@ export const Sidebar: React.FC = () => {
       <Menu
         items={menuItems}
         mode="inline"
-        selectedKeys={['overview']}
+        selectedKeys={[currentPage]}
         onClick={handleMenuClick}
         className="border-none"
       />
