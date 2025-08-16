@@ -17,6 +17,7 @@ from mcp_gateway.core.config import settings, get_settings
 from mcp_gateway.core.logging import setup_logging
 from mcp_gateway.core.service_registry import ServiceRegistry
 from mcp_gateway.auth.authentication_middleware import AuthenticationMiddleware
+from mcp_gateway.rl import RateLimitMiddleware, get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,16 @@ def create_app() -> FastAPI:
                 "description": "Model Context Protocol specific endpoints"
             }
         ]
+    )
+    
+    # Create rate limiter using dependency injection
+    limiter = get_rate_limiter()
+    
+    # Add rate limiting middleware (before authentication middleware)
+    app.add_middleware(
+        RateLimitMiddleware,
+        limiter=limiter,
+        apply_to_paths=("/api/v1/mcp",)  # Apply only to MCP protocol endpoints
     )
     
     # Add authentication middleware if enabled

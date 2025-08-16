@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO", description="Logging level")
     LOG_FORMAT: str = Field(default="json", description="Logging format: json or text")
     
+    # Security settings
+    ALLOWED_HOSTS: list[str] = Field(default_factory=lambda: ["*"], description="Allowed hosts for TrustedHostMiddleware")
+    CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["*"], description="CORS allowed origins")
+    
     # Authentication
     API_KEY_HEADER: str = Field(default="X-API-Key", description="API key header name")
     
@@ -52,6 +56,13 @@ class Settings(BaseSettings):
         default="config/services.yaml",
         description="Path to service registry configuration file"
     )
+    
+    # Rate limiting configuration
+    ENABLE_RATE_LIMITING: bool = Field(default=True, description="Enable rate limiting")
+    RATE_LIMIT_DEFAULT_LIMIT: int = Field(default=5, ge=1, le=1000, description="Default rate limit requests per window")
+    RATE_LIMIT_DEFAULT_WINDOW: int = Field(default=60, ge=1, le=3600, description="Default rate limit window in seconds")
+    RATE_LIMIT_BACKEND: str = Field(default="memory", pattern="^(memory|redis)$", description="Rate limiting backend")
+    RATE_LIMIT_REDIS_URL: Optional[str] = Field(default=None, description="Redis URL for rate limiting backend")
     
     @field_validator('LOG_LEVEL')
     @classmethod
@@ -91,6 +102,16 @@ class Settings(BaseSettings):
             clock_skew_tolerance=self.CLOCK_SKEW_TOLERANCE,
             required_scopes=self.REQUIRED_SCOPES
         )
+    
+    @property
+    def allowed_hosts(self) -> list[str]:
+        """Get allowed hosts for TrustedHostMiddleware."""
+        return self.ALLOWED_HOSTS
+    
+    @property 
+    def cors_origins(self) -> list[str]:
+        """Get CORS allowed origins."""
+        return self.CORS_ORIGINS
 
 
 # Global settings instance
