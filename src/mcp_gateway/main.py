@@ -74,10 +74,9 @@ async def lifespan(app: FastAPI):
             "port": settings.PORT,
             "debug": settings.DEBUG,
             "log_level": settings.LOG_LEVEL,
-            "max_connections": settings.max_connections,
-            "default_timeout": settings.default_timeout,
             "service_registry_file": settings.SERVICE_REGISTRY_FILE,
-            "auth_enabled": settings.ENABLE_AUTH
+            "auth_enabled": settings.ENABLE_AUTH,
+            "rate_limiting_enabled": settings.ENABLE_RATE_LIMITING
         }
     )
     
@@ -134,8 +133,8 @@ def create_app() -> FastAPI:
         title="MCP Gateway",
         description="Model Context Protocol Gateway for secure AI model interactions",
         version="0.1.0",
-        docs_url="/docs" if settings.DEBUG else None,
-        redoc_url="/redoc" if settings.DEBUG else None,
+        docs_url="/docs",
+        redoc_url="/redoc",
         lifespan=lifespan,
         openapi_tags=[
             {
@@ -153,6 +152,10 @@ def create_app() -> FastAPI:
             {
                 "name": "mcp",
                 "description": "Model Context Protocol specific endpoints"
+            },
+            {
+                "name": "dashboard",
+                "description": "Dashboard-specific endpoints for UI consumption"
             }
         ]
     )
@@ -203,7 +206,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, general_exception_handler)
     
     # Include API routes
-    app.include_router(router, prefix="/api/v1", tags=["api"])
+    app.include_router(router, prefix="/api/v1")
     
     # Root endpoint
     @app.get("/", tags=["health"])
@@ -238,6 +241,10 @@ def create_app() -> FastAPI:
         }
     
     return app
+
+
+# Create app instance for uvicorn to find
+app = create_app()
 
 
 def main() -> None:
