@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, Table, Typography, Alert, Spin, Button, Tag } from '../ui';
 import { useServiceHealth } from '../../hooks/useApi';
-import { ReloadOutlined, PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
+import { ReloadOutlined, PlayCircleOutlined, PauseCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import type { TableColumn } from '../ui/types';
+import { AddServiceModal } from '../services/AddServiceModal';
 
 const { Title } = Typography;
 
@@ -21,6 +22,7 @@ interface ServiceData {
 
 export const Services: React.FC = () => {
   const { data: healthData, isLoading: healthLoading, error: healthError } = useServiceHealth();
+  const [isAddServiceModalVisible, setIsAddServiceModalVisible] = useState(false);
 
   if (healthLoading) {
     return (
@@ -214,13 +216,22 @@ export const Services: React.FC = () => {
           <Title level={2}>Services Management</Title>
           <p className="text-gray-600">Manage and monitor MCP services</p>
         </div>
-        <Button 
-          type="primary" 
-          icon={<ReloadOutlined />}
-          onClick={handleRefresh}
-        >
-          Refresh
-        </Button>
+        <div className="space-x-2">
+          <Button 
+            type="ghost" 
+            icon={<PlusOutlined />}
+            onClick={() => setIsAddServiceModalVisible(true)}
+          >
+            Add Service
+          </Button>
+          <Button 
+            type="primary" 
+            icon={<ReloadOutlined />}
+            onClick={handleRefresh}
+          >
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -260,6 +271,11 @@ export const Services: React.FC = () => {
           className="w-full"
         />
       </Card>
+      
+      <AddServiceModal
+        visible={isAddServiceModalVisible}
+        onCancel={() => setIsAddServiceModalVisible(false)}
+      />
     </div>
   );
 };

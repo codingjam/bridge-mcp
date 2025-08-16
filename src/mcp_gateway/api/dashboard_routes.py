@@ -11,9 +11,12 @@ This module is intentionally decoupled from core MCP gateway logic to:
 Note: These endpoints are for dashboard consumption only and should not be used for core MCP operations.
 """
 
+import asyncio
 import logging
+import shutil
+import httpx
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -78,12 +81,48 @@ async def get_dashboard_overview(
     try:
         # Get service information from registry
         services = await registry.get_all_services()
-        health_status = await registry.get_all_health_status()
+        
+        # Perform real health checks for overview metrics
+        healthy_count = 0
+        unhealthy_count = 0
+        disabled_count = 0
+        
+        # Quick health check for overview (with shorter timeout)
+        for service_id, service in services.items():
+            if not getattr(service, 'enabled', True):
+                disabled_count += 1
+                continue
+                
+            # Quick health check with shorter timeout for overview
+            try:
+                if service.transport == "http":
+                    endpoint = str(service.endpoint)
+                    health_path = getattr(service, 'health_check_path', '/health')
+                    health_url = f"{endpoint.rstrip('/')}{health_path}"
+                    
+                    async with httpx.AsyncClient(timeout=2.0) as client:  # Shorter timeout for overview
+                        response = await client.get(health_url)
+                        if response.status_code == 200:
+                            healthy_count += 1
+                        else:
+                            unhealthy_count += 1
+                elif service.transport == "stdio":
+                    command = getattr(service, 'command', None)
+                    if command and isinstance(command, list) and len(command) > 0:
+                        if shutil.which(command[0]) is not None:
+                            healthy_count += 1
+                        else:
+                            unhealthy_count += 1
+                    else:
+                        unhealthy_count += 1
+                else:
+                    unhealthy_count += 1
+            except Exception:
+                unhealthy_count += 1
         
         # Calculate service metrics
         total_services = len(services)
-        enabled_services = sum(1 for service in services.values() if service.enabled)
-        healthy_services = sum(1 for service_id in services.keys() if health_status.get(service_id, False))
+        enabled_services = healthy_count + unhealthy_count
         
         # Get rate limiting information
         rate_limiter = get_rate_limiter()
@@ -94,7 +133,7 @@ async def get_dashboard_overview(
         
         # Determine overall system status
         system_status = _calculate_system_status(
-            total_services, healthy_services, enabled_services, rate_limit_stats
+            total_services, healthy_count, enabled_services, rate_limit_stats
         )
         
         overview_data = {
@@ -102,9 +141,9 @@ async def get_dashboard_overview(
             "services": {
                 "total": total_services,
                 "enabled": enabled_services,
-                "healthy": healthy_services,
-                "unhealthy": enabled_services - healthy_services,
-                "disabled": total_services - enabled_services
+                "healthy": healthy_count,
+                "unhealthy": unhealthy_count,
+                "disabled": disabled_count
             },
             
             # Rate Limiting Overview
@@ -125,7 +164,9 @@ async def get_dashboard_overview(
             "Dashboard overview data generated",
             extra={
                 "total_services": total_services,
-                "healthy_services": healthy_services,
+                "healthy_services": healthy_count,
+                "unhealthy_services": unhealthy_count,
+                "disabled_services": disabled_count,
                 "system_status": system_status["status"]
             }
         )
@@ -158,30 +199,49 @@ async def get_services_health_summary(
     """
     try:
         services = await registry.get_all_services()
-        health_status = await registry.get_all_health_status()
         
         service_health_summary = []
+        health_counts = {"healthy": 0, "unhealthy": 0, "disabled": 0}
         
-        for service_id, service in services.items():
-            is_healthy = health_status.get(service_id, False)
+        # Perform actual health checks for each service
+        health_check_tasks = []
+        service_items = list(services.items())
+        
+        for service_id, service in service_items:
+            health_check_tasks.append(_perform_health_check(service))
+        
+        # Execute all health checks concurrently for better performance
+        health_results = await asyncio.gather(*health_check_tasks, return_exceptions=True)
+        
+        for (service_id, service), health_result in zip(service_items, health_results):
+            # Handle any exceptions from health checks
+            if isinstance(health_result, Exception):
+                status = "unhealthy"
+                error_message = f"Health check failed: {str(health_result)}"
+                logger.error(f"Health check exception for {service_id}: {health_result}")
+            else:
+                status, error_message = health_result
+            
+            health_counts[status] += 1
             
             service_summary = {
                 "id": service_id,
                 "name": service.name,
                 "enabled": service.enabled,
-                "healthy": is_healthy,
-                "status": _get_service_status_text(service.enabled, is_healthy),
+                "healthy": status == "healthy",
+                "status": status,
                 "transport": service.transport,
                 "endpoint": str(service.endpoint) if service.transport == "http" else None,
                 "tags": service.tags or [],
-                "lastChecked": datetime.utcnow().isoformat()  # Placeholder - would be real timestamp
+                "lastChecked": datetime.utcnow().isoformat(),
+                "error": error_message if error_message else None
             }
             
             service_health_summary.append(service_summary)
         
         # Sort by status priority (unhealthy first, then disabled, then healthy)
         service_health_summary.sort(key=lambda s: (
-            0 if not s["enabled"] else (1 if not s["healthy"] else 2),
+            0 if s["status"] == "unhealthy" else (1 if s["status"] == "disabled" else 2),
             s["name"]
         ))
         
@@ -189,12 +249,22 @@ async def get_services_health_summary(
             "services": service_health_summary,
             "summary": {
                 "total": len(services),
-                "healthy": sum(1 for s in service_health_summary if s["healthy"] and s["enabled"]),
-                "unhealthy": sum(1 for s in service_health_summary if not s["healthy"] and s["enabled"]),
-                "disabled": sum(1 for s in service_health_summary if not s["enabled"])
+                "healthy": health_counts["healthy"],
+                "unhealthy": health_counts["unhealthy"],
+                "disabled": health_counts["disabled"]
             },
             "lastUpdated": datetime.utcnow().isoformat()
         }
+        
+        logger.info(
+            f"Service health check completed",
+            extra={
+                "total_services": len(services),
+                "healthy": health_counts["healthy"],
+                "unhealthy": health_counts["unhealthy"],
+                "disabled": health_counts["disabled"]
+            }
+        )
         
         return summary
         
@@ -207,6 +277,68 @@ async def get_services_health_summary(
 
 
 # Helper functions for dashboard data aggregation
+async def _perform_health_check(service) -> Tuple[str, Optional[str]]:
+    """
+    Perform actual health check on a service.
+    
+    Returns:
+        Tuple of (status, error_message)
+        status: "healthy", "unhealthy", "disabled"
+    """
+    try:
+        if not getattr(service, 'enabled', True):
+            return "disabled", "Service is disabled"
+            
+        transport = getattr(service, 'transport', None)
+        if not transport:
+            return "unhealthy", "No transport configuration"
+            
+        if transport == "http":
+            # Test HTTP connectivity
+            endpoint = str(getattr(service, 'endpoint', ''))
+            if not endpoint:
+                return "unhealthy", "No endpoint configured"
+                
+            health_path = getattr(service, 'health_check_path', '/health')
+            health_url = f"{endpoint.rstrip('/')}{health_path}"
+            
+            try:
+                timeout = getattr(service, 'timeout', 5.0)
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.get(health_url)
+                    if response.status_code == 200:
+                        return "healthy", None
+                    else:
+                        return "unhealthy", f"HTTP {response.status_code}"
+            except httpx.ConnectError:
+                return "unhealthy", "Connection refused"
+            except httpx.TimeoutException:
+                return "unhealthy", "Connection timeout"
+            except Exception as e:
+                return "unhealthy", f"Connection failed: {str(e)}"
+                    
+        elif transport == "stdio":
+            # For STDIO, check if command exists and is executable
+            command = getattr(service, 'command', None)
+            if not command or not isinstance(command, list) or len(command) == 0:
+                return "unhealthy", "No command specified"
+                
+            try:
+                # Test if command exists
+                if shutil.which(command[0]) is None:
+                    return "unhealthy", f"Command not found: {command[0]}"
+                return "healthy", None
+            except Exception as e:
+                return "unhealthy", f"Command check failed: {str(e)}"
+                
+        else:
+            return "unhealthy", f"Unknown transport type: {transport}"
+            
+    except Exception as e:
+        logger.error(f"Health check error for service: {e}", exc_info=True)
+        return "unhealthy", f"Health check error: {str(e)}"
+
+
 async def _get_rate_limit_overview(rate_limiter) -> Dict[str, Any]:
     """
     Get rate limiting overview data for dashboard display.
