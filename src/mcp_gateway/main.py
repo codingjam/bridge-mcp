@@ -15,8 +15,38 @@ from fastapi.responses import JSONResponse
 from mcp_gateway.api.routes import router
 from mcp_gateway.core.config import settings, get_settings
 from mcp_gateway.core.logging import setup_logging
+from mcp_gateway.core.service_registry import ServiceRegistry
+from mcp_gateway.auth.authentication_middleware import AuthenticationMiddleware
+from mcp_gateway.rl import RateLimitMiddleware, get_rate_limiter
 
 logger = logging.getLogger(__name__)
+
+# Global service registry instance
+_service_registry: Optional[ServiceRegistry] = None
+
+
+async def get_service_registry() -> ServiceRegistry:
+    """Get the global service registry instance (for dependency injection)"""
+    global _service_registry
+    if _service_registry is None:
+        raise RuntimeError("Service registry not initialized")
+    return _service_registry
+
+
+async def create_service_registry() -> ServiceRegistry:
+    """Create and initialize the service registry"""
+    from pathlib import Path
+    
+    auth_config = settings.get_auth_config()
+    registry = ServiceRegistry(
+        config_path=Path(settings.SERVICE_REGISTRY_FILE),
+        auth_config=auth_config
+    )
+    
+    # Load services and authentication configurations
+    await registry.load_services()
+    
+    return registry
 
 
 @asynccontextmanager
@@ -28,6 +58,15 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting MCP Gateway...")
     
+    # Initialize service registry
+    global _service_registry
+    try:
+        _service_registry = await create_service_registry()
+        logger.info("Service registry initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize service registry: {e}")
+        raise
+    
     logger.info(
         "Gateway configuration",
         extra={
@@ -35,8 +74,9 @@ async def lifespan(app: FastAPI):
             "port": settings.PORT,
             "debug": settings.DEBUG,
             "log_level": settings.LOG_LEVEL,
-            "max_connections": settings.max_connections,
-            "default_timeout": settings.default_timeout
+            "service_registry_file": settings.SERVICE_REGISTRY_FILE,
+            "auth_enabled": settings.ENABLE_AUTH,
+            "rate_limiting_enabled": settings.ENABLE_RATE_LIMITING
         }
     )
     
@@ -44,6 +84,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down MCP Gateway...")
+    _service_registry = None
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -92,8 +133,8 @@ def create_app() -> FastAPI:
         title="MCP Gateway",
         description="Model Context Protocol Gateway for secure AI model interactions",
         version="0.1.0",
-        docs_url="/docs" if settings.DEBUG else None,
-        redoc_url="/redoc" if settings.DEBUG else None,
+        docs_url="/docs",
+        redoc_url="/redoc",
         lifespan=lifespan,
         openapi_tags=[
             {
@@ -111,9 +152,38 @@ def create_app() -> FastAPI:
             {
                 "name": "mcp",
                 "description": "Model Context Protocol specific endpoints"
+            },
+            {
+                "name": "dashboard",
+                "description": "Dashboard-specific endpoints for UI consumption"
             }
         ]
     )
+    
+    # Create rate limiter using dependency injection
+    limiter = get_rate_limiter()
+    
+    # Add rate limiting middleware (before authentication middleware)
+    app.add_middleware(
+        RateLimitMiddleware,
+        limiter=limiter,
+        apply_to_paths=("/api/v1/mcp",)  # Apply only to MCP protocol endpoints
+    )
+    
+    # Add authentication middleware if enabled
+    auth_config = settings.get_auth_config()
+    if auth_config:
+        logger.info(
+            "Adding authentication middleware",
+            extra={
+                "keycloak_realm": auth_config.realm,
+                "enable_obo": auth_config.enable_obo,
+                "required_scopes": auth_config.required_scopes
+            }
+        )
+        app.add_middleware(AuthenticationMiddleware, auth_config=auth_config)
+    else:
+        logger.warning("Authentication is disabled - running in insecure mode")
     
     # Add security middleware
     app.add_middleware(
@@ -136,7 +206,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, general_exception_handler)
     
     # Include API routes
-    app.include_router(router, prefix="/api/v1", tags=["api"])
+    app.include_router(router, prefix="/api/v1")
     
     # Root endpoint
     @app.get("/", tags=["health"])
@@ -147,6 +217,11 @@ def create_app() -> FastAPI:
             "version": "0.1.0", 
             "status": "running",
             "description": "Model Context Protocol Gateway for secure AI model interactions",
+            "authentication": {
+                "enabled": settings.ENABLE_AUTH,
+                "realm": settings.KEYCLOAK_REALM if settings.ENABLE_AUTH else None,
+                "oidc_endpoint": f"{settings.KEYCLOAK_SERVER_URL}/realms/{settings.KEYCLOAK_REALM}" if settings.ENABLE_AUTH and settings.KEYCLOAK_SERVER_URL else None
+            },
             "api": {
                 "version": "v1",
                 "base_url": "/api/v1"
@@ -166,6 +241,10 @@ def create_app() -> FastAPI:
         }
     
     return app
+
+
+# Create app instance for uvicorn to find
+app = create_app()
 
 
 def main() -> None:

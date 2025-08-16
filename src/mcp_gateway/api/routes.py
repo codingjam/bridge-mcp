@@ -11,41 +11,60 @@ from fastapi.responses import JSONResponse
 
 from mcp_gateway.core.config import get_settings
 from mcp_gateway.core.proxy import MCPProxyService
+from mcp_gateway.core.authenticated_proxy import AuthenticatedMCPProxyService
 from mcp_gateway.core.service_registry import ServiceRegistry
+from mcp_gateway.auth.authentication_middleware import get_current_user, get_access_token
+from mcp_gateway.auth.models import UserContext, MCPServiceAuth, AuthStrategy
+from mcp_gateway.auth.obo_service import OBOTokenService
+from mcp_gateway.api.dashboard_routes import dashboard_router
 
 logger = logging.getLogger(__name__)
 
 # Create API router
 router = APIRouter()
 
-# Global registry instance (will be properly injected in production)
-_registry: Optional[ServiceRegistry] = None
+# Include dashboard routes with clear separation
+router.include_router(
+    dashboard_router,
+    # Dashboard routes are included but clearly separated from core MCP functionality
+    # These endpoints are specifically for the dashboard UI and should not be used
+    # for core MCP operations or service management
+)
 
 
 async def get_service_registry() -> ServiceRegistry:
     """
     Dependency injection for service registry
-    This ensures a singleton pattern and proper lifecycle management
+    Import here to avoid circular dependency
     """
-    global _registry
-    if _registry is None:
-        settings = get_settings()
-        _registry = ServiceRegistry(Path(settings.SERVICE_REGISTRY_FILE))
-        await _registry.load_services()
-    return _registry
+    from mcp_gateway.main import get_service_registry as get_registry
+    return await get_registry()
+
+
+async def get_obo_service() -> Optional[OBOTokenService]:
+    """
+    Dependency injection for OBO service
+    Returns OBO service if authentication is enabled
+    """
+    settings = get_settings()
+    auth_config = settings.get_auth_config()
+    if auth_config and auth_config.enable_obo:
+        return OBOTokenService(auth_config)
+    return None
 
 
 async def get_proxy_service(
-    registry: ServiceRegistry = Depends(get_service_registry)
-) -> MCPProxyService:
+    obo_service: Optional[OBOTokenService] = Depends(get_obo_service)
+) -> AuthenticatedMCPProxyService:
     """
-    Dependency injection for proxy service
+    Dependency injection for authenticated proxy service
     Returns a new proxy service instance for each request
     """
-    return MCPProxyService()
+    return AuthenticatedMCPProxyService(obo_service=obo_service)
 
 
 @router.get("/health", 
+           tags=["health"],
            summary="Health Check",
            description="Check if the gateway is running and healthy")
 async def health_check():
@@ -60,6 +79,7 @@ async def health_check():
 
 
 @router.get("/services",
+           tags=["services"],
            summary="List Services",
            description="Get all available MCP services with their status",
            response_model=Dict[str, Any])
@@ -99,6 +119,7 @@ async def list_services(registry: ServiceRegistry = Depends(get_service_registry
 
 
 @router.get("/services/{service_id}",
+           tags=["services"],
            summary="Get Service Info",
            description="Get detailed information about a specific service",
            response_model=Dict[str, Any])
@@ -139,6 +160,7 @@ async def get_service_info(
 
 
 @router.get("/services/{service_id}/health",
+           tags=["services"],
            summary="Check Service Health",
            description="Perform a health check on a specific service",
            response_model=Dict[str, Any])
@@ -203,6 +225,7 @@ async def check_service_health(
 @router.api_route(
     "/proxy/{service_id}/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    tags=["proxy"],
     summary="Proxy Request",
     description="Proxy any HTTP request to the specified MCP service"
 )
@@ -210,13 +233,16 @@ async def proxy_request(
     service_id: str,
     path: str,
     request: Request,
-    registry: ServiceRegistry = Depends(get_service_registry)
+    registry: ServiceRegistry = Depends(get_service_registry),
+    proxy: AuthenticatedMCPProxyService = Depends(get_proxy_service),
+    user: Optional[UserContext] = Depends(get_current_user)
 ):
     """
-    Proxy requests to MCP servers with comprehensive error handling
+    Proxy requests to MCP servers with comprehensive error handling and authentication
     
     This endpoint forwards any HTTP request to the specified MCP service,
-    handling headers, body, and query parameters transparently.
+    handling headers, body, and query parameters transparently. If authentication
+    is enabled, it will use OBO tokens for secure service-to-service communication.
     """
     # Validate service ID
     if not service_id or not service_id.strip():
@@ -267,51 +293,67 @@ async def proxy_request(
     if service.base_path:
         full_path = f"{service.base_path.rstrip('/')}/{path.lstrip('/')}"
     
-    # Forward request through proxy
+    # Get authentication data if available
+    user_token = get_access_token(request)
+    user_claims = getattr(request.state, 'token_claims', None)
+    
+    # Create service auth configuration (this could be loaded from service registry)
+    service_auth = MCPServiceAuth(
+        service_id=service_id,
+        auth_strategy=AuthStrategy.OBO_REQUIRED if user else AuthStrategy.NO_AUTH,
+        required_scopes=[],
+        custom_headers={}
+    )
+    
+    # Forward request through authenticated proxy
     try:
-        async with MCPProxyService() as proxy:
-            logger.info(
-                f"Proxying {method} request",
-                extra={
-                    "service_id": service_id,
-                    "method": method,
-                    "path": full_path,
-                    "query_params": bool(query_params),
-                    "body_size": len(body) if body else 0
-                }
-            )
-            
-            response_data = await proxy.forward_request(
-                target_url=str(service.endpoint),
-                method=method,
-                path=full_path,
-                headers=headers,
-                body=body,
-                query_params=query_params,
-                timeout=service.timeout
-            )
-            
-            # Prepare response headers (filter out problematic ones)
-            response_headers = response_data.get("headers", {})
-            filtered_headers = {
-                k: v for k, v in response_headers.items()
-                if k.lower() not in ['content-length', 'transfer-encoding', 'connection', 'server']
+        logger.info(
+            f"Proxying {method} request",
+            extra={
+                "service_id": service_id,
+                "method": method,
+                "path": full_path,
+                "authenticated": user is not None,
+                "user_id": user.user_id if user else None,
+                "query_params": bool(query_params),
+                "body_size": len(body) if body else 0
             }
+        )
+        
+        response_data = await proxy.forward_authenticated_request(
+            target_url=str(service.endpoint),
+            method=method,
+            path=full_path,
+            headers=headers,
+            body=body,
+            query_params=query_params,
+            timeout=service.timeout,
+            user_token=user_token,
+            user_claims=user_claims,
+            service_auth=service_auth
+        )
+        
+        # Prepare response headers (filter out problematic ones)
+        response_headers = response_data.get("headers", {})
+        filtered_headers = {
+            k: v for k, v in response_headers.items()
+            if k.lower() not in ['content-length', 'transfer-encoding', 'connection', 'server']
+        }
+        
+        # Return appropriate response type
+        if "json" in response_data:
+            return JSONResponse(
+                content=response_data["json"],
+                status_code=response_data["status_code"],
+                headers=filtered_headers
+            )
+        else:
+            return Response(
+                content=response_data["content"],
+                status_code=response_data["status_code"],
+                headers=filtered_headers
+            )
             
-            # Return appropriate response type
-            if "json" in response_data:
-                return JSONResponse(
-                    content=response_data["json"],
-                    status_code=response_data["status_code"],
-                    headers=filtered_headers
-                )
-            else:
-                return Response(
-                    content=response_data["content"],
-                    status_code=response_data["status_code"],
-                    headers=filtered_headers
-                )
-                
     except HTTPException:
         # Re-raise HTTP exceptions from proxy service
         raise
@@ -333,18 +375,21 @@ async def proxy_request(
 
 
 @router.post("/mcp/{service_id}/call",
+            tags=["mcp"],
             summary="MCP Protocol Call",
             description="Make a Model Context Protocol call to a specific service")
 async def mcp_call(
     service_id: str,
     request: Request,
-    registry: ServiceRegistry = Depends(get_service_registry)
+    registry: ServiceRegistry = Depends(get_service_registry),
+    proxy: AuthenticatedMCPProxyService = Depends(get_proxy_service),
+    user: Optional[UserContext] = Depends(get_current_user)
 ):
     """
     MCP protocol call endpoint
     
     This is a specialized endpoint for MCP protocol calls with
-    proper header handling and protocol compliance.
+    proper header handling, protocol compliance, and authentication.
     """
     service = await registry.get_service(service_id)
     if not service:
@@ -371,47 +416,73 @@ async def mcp_call(
     headers["Accept"] = "application/json"
     headers["X-MCP-Gateway"] = "mcp-gateway/0.1.0"
     
+    # Get authentication data if available
+    user_token = get_access_token(request)
+    user_claims = getattr(request.state, 'token_claims', None)
+    
+    # Get service authentication configuration from registry
+    service_auth = await registry.get_service_auth(service_id)
+    if not service_auth:
+        # Fallback to default auth configuration for MCP calls
+        service_auth = MCPServiceAuth(
+            service_id=service_id,
+            auth_strategy=AuthStrategy.NO_AUTH,  # Default to no auth if not configured
+            required_scopes=[],
+            custom_headers={}
+        )
+        logger.warning(
+            f"No auth configuration found for service {service_id}, using default (no auth)"
+        )
+    
+    # Override scopes for MCP calls if not already specified
+    if not service_auth.required_scopes:
+        service_auth.required_scopes = ["mcp:call"]
+    
     try:
         body = await request.body()
         
-        async with MCPProxyService() as proxy:
-            logger.info(
-                f"Making MCP call to {service_id}",
-                extra={
-                    "service_id": service_id,
-                    "endpoint": str(service.endpoint)
-                }
+        logger.info(
+            f"Making MCP call to {service_id}",
+            extra={
+                "service_id": service_id,
+                "endpoint": str(service.endpoint),
+                "authenticated": user is not None,
+                "user_id": user.user_id if user else None
+            }
+        )
+        
+        response_data = await proxy.forward_authenticated_request(
+            target_url=str(service.endpoint),
+            method="POST",
+            path="/call",  # Standard MCP call endpoint
+            headers=headers,
+            body=body,
+            timeout=service.timeout,
+            user_token=user_token,
+            user_claims=user_claims,
+            service_auth=service_auth
+        )
+        
+        # MCP calls should always return JSON
+        if "json" in response_data:
+            return JSONResponse(
+                content=response_data["json"],
+                status_code=response_data["status_code"]
             )
-            
-            response_data = await proxy.forward_request(
-                target_url=str(service.endpoint),
-                method="POST",
-                path="/call",  # Standard MCP call endpoint
-                headers=headers,
-                body=body,
-                timeout=service.timeout
-            )
-            
-            # MCP calls should always return JSON
-            if "json" in response_data:
-                return JSONResponse(
-                    content=response_data["json"],
-                    status_code=response_data["status_code"]
+        else:
+            # If not JSON, try to parse the content as JSON
+            try:
+                import json
+                content = json.loads(response_data["content"].decode())
+                return JSONResponse(content=content, status_code=response_data["status_code"])
+            except:
+                # Fall back to raw content
+                return Response(
+                    content=response_data["content"],
+                    status_code=response_data["status_code"],
+                    media_type="application/json"
                 )
-            else:
-                # If not JSON, try to parse the content as JSON
-                try:
-                    import json
-                    content = json.loads(response_data["content"].decode())
-                    return JSONResponse(content=content, status_code=response_data["status_code"])
-                except:
-                    # Fall back to raw content
-                    return Response(
-                        content=response_data["content"],
-                        status_code=response_data["status_code"],
-                        media_type="application/json"
-                    )
-                    
+                
     except HTTPException:
         raise
     except Exception as e:

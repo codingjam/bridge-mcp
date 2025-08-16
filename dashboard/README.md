@@ -1,0 +1,82 @@
+# Bridge MCP Gateway Dashboard
+
+A modern React TypeScript dashboard for managing and monitoring the Bridge MCP Gateway. Built with React 18, TypeScript, Vite, Ant Design, and Tailwind CSS.
+
+## Features
+
+- **Real-time Monitoring**: Live metrics and system health monitoring
+- **Service Management**: Configure and manage MCP services
+- **Rate Limiting**: Advanced rate limiting configuration and monitoring
+- **Authentication**: OIDC-based authentication system
+- **Audit Logging**: Comprehensive audit trail and log management
+- **UI Abstraction**: Easy-to-swap UI component library architecture
+
+## Technology Stack
+
+- **React 18** + **TypeScript** - Modern React with full type safety
+- **Vite** - Fast build tool and development server
+- **Ant Design** - Professional UI components
+- **Tailwind CSS** - Utility-first styling
+- **TanStack Query** - Server state management
+- **React Context** - Global application state
+
+## Getting Started
+
+If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+
+```js
+export default tseslint.config([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+
+      // Remove tseslint.configs.recommended and replace with this
+      ...tseslint.configs.recommendedTypeChecked,
+      // Alternatively, use this for stricter rules
+      ...tseslint.configs.strictTypeChecked,
+      // Optionally, add this for stylistic rules
+      ...tseslint.configs.stylisticTypeChecked,
+
+      // Other configs...
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
+```
+
+You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+
+```js
+// eslint.config.js
+import reactX from 'eslint-plugin-react-x'
+import reactDom from 'eslint-plugin-react-dom'
+
+export default tseslint.config([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+      // Enable lint rules for React
+      reactX.configs['recommended-typescript'],
+      // Enable lint rules for React DOM
+      reactDom.configs.recommended,
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
+```

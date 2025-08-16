@@ -22,6 +22,31 @@ The MCP Gateway acts as a centralized proxy and security layer for MCP servers, 
 - **Phase 3**: Dynamic service discovery, policy engine (OPA), Prometheus metrics
 - **Phase 4**: Multi-tenancy, audit logging, data masking
 
+## Dashboard (Under Development)
+
+The MCP Gateway includes a modern web-based dashboard for monitoring and managing your MCP services. The dashboard provides real-time insights into service health, performance metrics, and system status.
+
+![Dashboard Overview](docs/screenshots/dashboard-overview.png)
+
+### Dashboard Features
+- **Service Management**: View and monitor all configured MCP services
+- **Real-time Health Monitoring**: Live service health checks and status updates
+- **Performance Metrics**: Response times, success rates, and system performance
+- **System Overview**: Total requests, active services, and operational status
+- **Responsive Design**: Modern UI built with React and Ant Design
+
+### Accessing the Dashboard
+1. Start the MCP Gateway server
+2. Start the dashboard development server:
+   ```bash
+   cd dashboard
+   npm install
+   npm run dev
+   ```
+3. Open your browser to `http://localhost:5173`
+
+*Note: The dashboard is currently under active development and new features are being added regularly.*
+
 ## Quick Start
 
 ### Prerequisites
@@ -105,8 +130,18 @@ services:
 
 ## API Endpoints
 
+### Core Endpoints
 - `GET /health` - Health check endpoint
 - `GET /docs` - Interactive API documentation (debug mode only)
+- `GET /api/v1/services` - List all configured MCP services
+- `GET /api/v1/services/{service_id}` - Get detailed service information
+- `GET /api/v1/services/{service_id}/health` - Check specific service health
+
+### Dashboard API Endpoints
+- `GET /api/v1/dashboard/overview` - Dashboard overview metrics
+- `GET /api/v1/dashboard/services/health` - Service health summary for dashboard
+
+*See `/docs` for complete API documentation when running in debug mode.*
 
 ## Development
 
@@ -116,13 +151,24 @@ services:
 src/mcp_gateway/           # Main application package
 ├── __init__.py
 ├── main.py               # Application entry point
-└── core/                 # Core functionality
-    ├── config.py         # Configuration management
-    └── logging.py        # Logging setup
+├── api/                  # API routes and endpoints
+│   ├── routes.py         # Core API routes
+│   └── dashboard_routes.py # Dashboard-specific API routes
+├── core/                 # Core functionality
+│   ├── config.py         # Configuration management
+│   ├── logging.py        # Logging setup
+│   └── service_registry.py # Service registry management
+└── auth/                 # Authentication modules
+    └── ...
+dashboard/                # React-based web dashboard
+├── src/                  # Dashboard source code
+├── public/               # Static assets
+└── package.json          # Dashboard dependencies
 config/                   # Configuration files
 ├── services.yaml         # Service registry
 tests/                    # Test suite
 docs/                     # Documentation
+└── screenshots/          # Dashboard screenshots
 ```
 
 ### Running Tests

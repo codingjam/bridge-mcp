@@ -2,7 +2,7 @@
 # This file defines the MCP servers that the gateway can route requests to
 
 services:
-  # Example MCP server configuration
+  # Example MCP server configuration - OBO authentication required
   example-mcp-server:
     name: "Example MCP Server"
     description: "A sample MCP server for demonstration"
@@ -11,8 +11,10 @@ services:
     health_check_path: "/health"
     timeout: 30
     enabled: true
+    auth:
+      strategy: "obo_required"
     
-  # Example stdio transport (for local MCP servers)
+  # Example stdio transport (for local MCP servers) - OBO authentication required
   local-mcp-server:
     name: "Local MCP Server"
     description: "Local MCP server using stdio transport"
@@ -20,10 +22,45 @@ services:
     transport: "stdio"
     command: ["python", "-m", "my_mcp_server"]
     working_directory: "/path/to/mcp/server"
-    enabled: false
+    enabled: true
+    auth:
+      strategy: "obo_required"
+
+  # Example secure service requiring OBO authentication
+  secure-analytics-server:
+    name: "Secure Analytics Server"
+    description: "Analytics server requiring OBO token exchange"
+    endpoint: "https://analytics.company.com"
+    transport: "http"
+    health_check_path: "/health"
+    timeout: 30
+    enabled: true  # Enabled for testing
+    auth:
+      strategy: "obo_required"
+      target_audience: "analytics-api"
+      required_scopes: ["analytics:read", "mcp:call"]
+      custom_headers:
+        "X-Service-Name": "mcp-gateway"
+        "X-Version": "1.0.0"
+
+  # Example legacy service using token passthrough
+  legacy-passthrough-server:
+    name: "Legacy Passthrough Server"
+    description: "Legacy server that accepts user tokens directly"
+    endpoint: "https://legacy.company.com"
+    transport: "http"
+    health_check_path: "/health"
+    timeout: 45
+    enabled: true  # Enabled for testing
+    auth:
+      strategy: "passthrough"
+      required_scopes: ["legacy:access", "mcp:call"]
+      custom_headers:
+        "X-Gateway": "mcp-gateway"
 
 # Global service configuration
 global:
   default_timeout: 30
   health_check_interval: 60  # seconds
   enable_service_discovery: false
+  enable_health_checks: true

@@ -24,12 +24,32 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO", description="Logging level")
     LOG_FORMAT: str = Field(default="json", description="Logging format: json or text")
     
+    # Security settings
+    ALLOWED_HOSTS: list[str] = Field(default_factory=lambda: ["*"], description="Allowed hosts for TrustedHostMiddleware")
+    CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["*"], description="CORS allowed origins")
+    
     # Authentication
     API_KEY_HEADER: str = Field(default="X-API-Key", description="API key header name")
-    SECRET_KEY: str = Field(default="", description="Secret key for JWT tokens")
     
-    # Redis (for rate limiting and caching)
-    REDIS_URL: Optional[str] = Field(default=None, description="Redis connection URL")
+    # OIDC Authentication with Keycloak
+    ENABLE_AUTH: bool = Field(default=False, description="Enable OIDC authentication")
+    KEYCLOAK_SERVER_URL: Optional[str] = Field(default=None, description="Keycloak server URL")
+    KEYCLOAK_REALM: str = Field(default="master", description="Keycloak realm")
+    KEYCLOAK_CLIENT_ID: str = Field(default="mcp-gateway", description="Keycloak client ID")
+    KEYCLOAK_CLIENT_SECRET: str = Field(default="", description="Keycloak client secret")
+    
+    # OIDC Token validation settings
+    TOKEN_AUDIENCE: Optional[str] = Field(default=None, description="Expected token audience")
+    TOKEN_ISSUER: Optional[str] = Field(default=None, description="Expected token issuer")
+    JWKS_CACHE_TTL: int = Field(default=3600, description="JWKS cache TTL in seconds")
+    
+    # OBO (On-Behalf-Of) settings
+    ENABLE_OBO: bool = Field(default=True, description="Enable OAuth2 token exchange for OBO")
+    OBO_CACHE_TTL: int = Field(default=1800, description="OBO token cache TTL in seconds")
+    
+    # Security settings
+    CLOCK_SKEW_TOLERANCE: int = Field(default=300, description="Clock skew tolerance in seconds")
+    REQUIRED_SCOPES: list[str] = Field(default_factory=list, description="Required scopes for gateway access")
     
     # Service registry
     SERVICE_REGISTRY_FILE: str = Field(
@@ -37,27 +57,12 @@ class Settings(BaseSettings):
         description="Path to service registry configuration file"
     )
     
-    # HTTP Client configuration for proxy
-    default_timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Default request timeout")
-    connect_timeout: float = Field(default=10.0, ge=1.0, le=60.0, description="Connection timeout")
-    read_timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Read timeout")
-    write_timeout: float = Field(default=10.0, ge=1.0, le=60.0, description="Write timeout")
-    pool_timeout: float = Field(default=5.0, ge=1.0, le=30.0, description="Pool timeout")
-    health_check_timeout: float = Field(default=5.0, ge=1.0, le=30.0, description="Health check timeout")
-    
-    # Connection pool settings
-    max_connections: int = Field(default=100, ge=1, le=1000, description="Max HTTP connections")
-    max_keepalive_connections: int = Field(default=20, ge=1, le=100, description="Max keepalive connections")
-    
-    # Security settings
-    allowed_hosts: list[str] = Field(default_factory=lambda: ["*"], description="Allowed host headers")
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"], description="CORS allowed origins")
-    max_request_size: int = Field(default=10 * 1024 * 1024, ge=1024, description="Max request size in bytes")  # 10MB
-    
-    # Rate limiting (future use)
-    enable_rate_limiting: bool = Field(default=False, description="Enable rate limiting")
-    rate_limit_requests: int = Field(default=100, ge=1, description="Requests per window")
-    rate_limit_window: int = Field(default=60, ge=1, description="Rate limit window in seconds")
+    # Rate limiting configuration
+    ENABLE_RATE_LIMITING: bool = Field(default=True, description="Enable rate limiting")
+    RATE_LIMIT_DEFAULT_LIMIT: int = Field(default=5, ge=1, le=1000, description="Default rate limit requests per window")
+    RATE_LIMIT_DEFAULT_WINDOW: int = Field(default=60, ge=1, le=3600, description="Default rate limit window in seconds")
+    RATE_LIMIT_BACKEND: str = Field(default="memory", pattern="^(memory|redis)$", description="Rate limiting backend")
+    RATE_LIMIT_REDIS_URL: Optional[str] = Field(default=None, description="Redis URL for rate limiting backend")
     
     @field_validator('LOG_LEVEL')
     @classmethod
@@ -76,6 +81,37 @@ class Settings(BaseSettings):
         if v.lower() not in valid_formats:
             raise ValueError(f"Log format must be one of {valid_formats}")
         return v.lower()
+    
+    def get_auth_config(self):
+        """Create AuthConfig from settings"""
+        if not self.ENABLE_AUTH or not self.KEYCLOAK_SERVER_URL:
+            return None
+        
+        from mcp_gateway.auth.models import AuthConfig
+        
+        return AuthConfig(
+            keycloak_server_url=self.KEYCLOAK_SERVER_URL,
+            realm=self.KEYCLOAK_REALM,
+            client_id=self.KEYCLOAK_CLIENT_ID,
+            client_secret=self.KEYCLOAK_CLIENT_SECRET,
+            audience=self.TOKEN_AUDIENCE,
+            issuer=self.TOKEN_ISSUER,
+            jwks_cache_ttl=self.JWKS_CACHE_TTL,
+            enable_obo=self.ENABLE_OBO,
+            obo_cache_ttl=self.OBO_CACHE_TTL,
+            clock_skew_tolerance=self.CLOCK_SKEW_TOLERANCE,
+            required_scopes=self.REQUIRED_SCOPES
+        )
+    
+    @property
+    def allowed_hosts(self) -> list[str]:
+        """Get allowed hosts for TrustedHostMiddleware."""
+        return self.ALLOWED_HOSTS
+    
+    @property 
+    def cors_origins(self) -> list[str]:
+        """Get CORS allowed origins."""
+        return self.CORS_ORIGINS
 
 
 # Global settings instance
