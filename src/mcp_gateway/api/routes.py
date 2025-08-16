@@ -16,11 +16,20 @@ from mcp_gateway.core.service_registry import ServiceRegistry
 from mcp_gateway.auth.authentication_middleware import get_current_user, get_access_token
 from mcp_gateway.auth.models import UserContext, MCPServiceAuth, AuthStrategy
 from mcp_gateway.auth.obo_service import OBOTokenService
+from mcp_gateway.api.dashboard_routes import dashboard_router
 
 logger = logging.getLogger(__name__)
 
 # Create API router
 router = APIRouter()
+
+# Include dashboard routes with clear separation
+router.include_router(
+    dashboard_router,
+    # Dashboard routes are included but clearly separated from core MCP functionality
+    # These endpoints are specifically for the dashboard UI and should not be used
+    # for core MCP operations or service management
+)
 
 
 async def get_service_registry() -> ServiceRegistry:
@@ -55,6 +64,7 @@ async def get_proxy_service(
 
 
 @router.get("/health", 
+           tags=["health"],
            summary="Health Check",
            description="Check if the gateway is running and healthy")
 async def health_check():
@@ -69,6 +79,7 @@ async def health_check():
 
 
 @router.get("/services",
+           tags=["services"],
            summary="List Services",
            description="Get all available MCP services with their status",
            response_model=Dict[str, Any])
@@ -108,6 +119,7 @@ async def list_services(registry: ServiceRegistry = Depends(get_service_registry
 
 
 @router.get("/services/{service_id}",
+           tags=["services"],
            summary="Get Service Info",
            description="Get detailed information about a specific service",
            response_model=Dict[str, Any])
@@ -148,6 +160,7 @@ async def get_service_info(
 
 
 @router.get("/services/{service_id}/health",
+           tags=["services"],
            summary="Check Service Health",
            description="Perform a health check on a specific service",
            response_model=Dict[str, Any])
@@ -212,6 +225,7 @@ async def check_service_health(
 @router.api_route(
     "/proxy/{service_id}/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    tags=["proxy"],
     summary="Proxy Request",
     description="Proxy any HTTP request to the specified MCP service"
 )
@@ -361,6 +375,7 @@ async def proxy_request(
 
 
 @router.post("/mcp/{service_id}/call",
+            tags=["mcp"],
             summary="MCP Protocol Call",
             description="Make a Model Context Protocol call to a specific service")
 async def mcp_call(

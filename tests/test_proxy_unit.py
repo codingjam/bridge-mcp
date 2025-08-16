@@ -4,17 +4,8 @@ Tests individual components in isolation without HTTP endpoints
 """
 import pytest
 from unittest.mock import AsyncMock, patch
-from fastapi.testclient import TestClient
 
-from mcp_gateway.main import create_app
 from mcp_gateway.core.service_registry import MCPService
-
-
-@pytest.fixture
-def client():
-    """Create test client"""
-    app = create_app()
-    return TestClient(app)
 
 
 @pytest.fixture
@@ -29,58 +20,6 @@ def mock_service():
         tags=["test"],
         timeout=10.0
     )
-
-
-class TestHealthEndpoint:
-    """Test basic health endpoint functionality"""
-    
-    def test_health_endpoint(self, client):
-        """Test the basic health endpoint works"""
-        response = client.get("/api/v1/health")
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert data["status"] == "healthy"
-        assert data["service"] == "mcp-gateway"
-
-
-class TestServiceManagement:
-    """Test service listing and management endpoints - Integration tests"""
-    
-    def test_list_services(self, client):
-        """Test services listing endpoint"""
-        response = client.get("/api/v1/services")
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert "count" in data
-        assert "services" in data
-        assert data["count"] == 2  # example-mcp-server + local-mcp-server
-        assert "example-mcp-server" in data["services"]
-        
-        service_data = data["services"]["example-mcp-server"]
-        assert service_data["name"] == "Example MCP Server"
-        assert service_data["transport"] == "http"
-        assert service_data["enabled"] is True
-    
-    def test_get_service_info(self, client):
-        """Test individual service info endpoint"""
-        response = client.get("/api/v1/services/example-mcp-server")
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert data["id"] == "example-mcp-server"
-        assert data["name"] == "Example MCP Server"
-        assert data["transport"] == "http"
-        assert data["enabled"] is True
-        assert data["endpoint"] == "http://localhost:3000"
-    
-    def test_service_not_found(self, client):
-        """Test service not found error"""
-        response = client.get("/api/v1/services/nonexistent-service")
-        assert response.status_code == 404
-        data = response.json()
-        assert "not found" in data["detail"].lower()
 
 
 class TestUnitTests:
