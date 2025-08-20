@@ -66,7 +66,8 @@ export const useCreateService = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard', 'health'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'services', 'health'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'overview'] });
     },
   });
 };
@@ -81,7 +82,8 @@ export const useUpdateService = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard', 'health'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'services', 'health'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'overview'] });
     },
   });
 };
@@ -95,7 +97,8 @@ export const useDeleteService = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard', 'health'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'services', 'health'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'overview'] });
     },
   });
 };
