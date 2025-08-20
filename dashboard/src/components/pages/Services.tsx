@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Card, Table, Typography, Alert, Spin, Button, Tag } from '../ui';
-import { useServiceHealth } from '../../hooks/useApi';
-import { ReloadOutlined, PlayCircleOutlined, PauseCircleOutlined, PlusOutlined } from '@ant-design/icons';
+import { useServiceHealth, useDeleteService } from '../../hooks/useApi';
+import { ReloadOutlined, PlayCircleOutlined, PauseCircleOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { TableColumn } from '../ui/types';
 import { AddServiceModal } from '../services/AddServiceModal';
 
@@ -87,7 +87,21 @@ export const Services: React.FC = () => {
     }
   };
 
-  const columns: TableColumn<ServiceData>[] = [
+    const deleteServiceMutation = useDeleteService();
+
+  const handleDeleteService = async (id: string, name: string) => {
+    const confirmed = window.confirm(`Are you sure you want to delete the service "${name}"? This action cannot be undone.`);
+    
+    if (confirmed) {
+      try {
+        await deleteServiceMutation.mutateAsync(id);
+      } catch (error) {
+        console.error('Failed to delete service:', error);
+      }
+    }
+  };
+
+  const columns: TableColumn[] = [
     {
       key: 'status',
       title: 'Status',
@@ -185,12 +199,12 @@ export const Services: React.FC = () => {
             {record.enabled ? 'Disable' : 'Enable'}
           </Button>
           <Button 
-            type="text" 
+            type="danger" 
             size="small"
-            icon={<ReloadOutlined />}
-            onClick={() => console.log('Test service:', record.id)}
+            icon={<DeleteOutlined />}
+            onClick={() => handleDeleteService(record.id, record.name)}
           >
-            Test
+            Delete
           </Button>
         </div>
       ),

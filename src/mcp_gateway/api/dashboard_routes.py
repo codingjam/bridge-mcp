@@ -15,6 +15,7 @@ import asyncio
 import logging
 import shutil
 import httpx
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,6 +24,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from mcp_gateway.core.config import get_settings
 from mcp_gateway.core.service_registry import ServiceRegistry
 from mcp_gateway.rl import get_rate_limiter
+from mcp_gateway.api.models import (
+    ServiceCreateRequest, 
+    ServiceCreateResponse, 
+    ServiceDeleteResponse,
+    ServiceTestRequest,
+    ServiceTestResponse
+)
 
 logger = logging.getLogger(__name__)
 
@@ -445,3 +453,310 @@ def _get_service_status_text(enabled: bool, healthy: bool) -> str:
         return "healthy"
     else:
         return "unhealthy"
+
+
+@dashboard_router.post("/services",
+                      tags=["dashboard"],
+                      summary="Create New Service",
+                      description="Add a new MCP service to the configuration",
+                      response_model=ServiceCreateResponse)
+async def create_service(
+    service_data: ServiceCreateRequest,
+    registry: ServiceRegistry = Depends(get_service_registry)
+):
+    """
+    Create a new MCP service and add it to the configuration.
+    
+    This endpoint allows the dashboard to dynamically add new services
+    to the MCP Gateway configuration. The service will be persisted
+    to the services.yaml file and immediately available for use.
+    
+    Args:
+        service_data: Service configuration data
+        
+    Returns:
+        ServiceCreateResponse with the generated service ID and status
+        
+    Raises:
+        HTTPException: If service creation fails
+    """
+    logger.info(f"Creating new service: name={service_data.name}, transport={service_data.transport}")
+    
+    try:
+        # Generate unique service ID from name
+        service_id = registry.generate_service_id(service_data.name)
+        
+        # Prepare service configuration for YAML
+        service_config = {
+            "name": service_data.name,
+            "description": service_data.description or "",
+            "transport": service_data.transport,
+            "enabled": service_data.enabled,
+            "tags": service_data.tags or []
+        }
+        
+        # Add transport-specific configuration
+        if service_data.transport == "http":
+            if not service_data.endpoint:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="endpoint is required for HTTP transport"
+                )
+            service_config.update({
+                "endpoint": service_data.endpoint,
+                "timeout": service_data.timeout or 30.0,
+                "health_check_path": service_data.health_check_path or "/health"
+            })
+        elif service_data.transport == "stdio":
+            if not service_data.command:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="command is required for STDIO transport"
+                )
+            service_config.update({
+                "endpoint": service_id,  # Use service_id as endpoint for stdio
+                "command": service_data.command,
+            })
+            if service_data.working_directory:
+                service_config["working_directory"] = service_data.working_directory
+        
+        # Add authentication configuration
+        if service_data.auth:
+            service_config["auth"] = service_data.auth
+        else:
+            # Default to no authentication
+            service_config["auth"] = {"strategy": "no_auth"}
+        
+        # Add service to configuration file
+        await registry.add_service_to_config(service_id, service_config)
+        
+        logger.info(
+            f"Created new service via dashboard API",
+            extra={
+                "service_id": service_id,
+                "service_name": service_data.name,
+                "transport": service_data.transport,
+                "enabled": service_data.enabled
+            }
+        )
+        
+        return ServiceCreateResponse(
+            id=service_id,
+            status="created",
+            message=f"Service '{service_data.name}' created successfully with ID '{service_id}'"
+        )
+        
+    except ValueError as e:
+        logger.warning(f"Service creation validation error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to create service: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create service: {str(e)}"
+        )
+
+
+@dashboard_router.delete("/services/{service_id}",
+                        tags=["dashboard"],
+                        summary="Delete Service",
+                        description="Remove an MCP service from the configuration",
+                        response_model=ServiceDeleteResponse)
+async def delete_service(
+    service_id: str,
+    registry: ServiceRegistry = Depends(get_service_registry)
+):
+    """
+    Delete an MCP service from the configuration.
+    
+    This endpoint allows the dashboard to remove services from the
+    MCP Gateway configuration. The service will be removed from
+    the services.yaml file and no longer available for routing.
+    
+    Args:
+        service_id: The ID of the service to delete
+        
+    Returns:
+        ServiceDeleteResponse with the deletion status
+        
+    Raises:
+        HTTPException: If service deletion fails or service not found
+    """
+    try:
+        # Get service info before deletion for logging
+        services = await registry.get_all_services()
+        if service_id not in services:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Service '{service_id}' not found"
+            )
+        
+        service = services[service_id]
+        service_name = service.name
+        
+        # Remove service from configuration file
+        await registry.remove_service_from_config(service_id)
+        
+        logger.info(
+            f"Deleted service via dashboard API",
+            extra={
+                "service_id": service_id,
+                "service_name": service_name
+            }
+        )
+        
+        return ServiceDeleteResponse(
+            id=service_id,
+            status="deleted",
+            message=f"Service '{service_name}' (ID: '{service_id}') deleted successfully"
+        )
+        
+    except ValueError as e:
+        logger.warning(f"Service deletion validation error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete service {service_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete service: {str(e)}"
+        )
+
+
+@dashboard_router.post("/services/test",
+                      tags=["dashboard"],
+                      summary="Test Service Connection",
+                      description="Test connectivity to a service without adding it",
+                      response_model=ServiceTestResponse)
+async def test_service_connection(
+    test_data: ServiceTestRequest
+):
+    """
+    Test connectivity to a service without adding it to the configuration.
+    
+    This endpoint allows the dashboard to validate service connectivity
+    before actually creating the service. Useful for form validation
+    and troubleshooting.
+    
+    Args:
+        test_data: Service connection test parameters
+        
+    Returns:
+        ServiceTestResponse with test results
+    """
+    start_time = time.time()
+    
+    try:
+        if test_data.transport == "http":
+            if not test_data.endpoint:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="endpoint is required for HTTP transport test"
+                )
+            
+            # Test HTTP connectivity
+            try:
+                timeout = test_data.timeout or 5.0
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.get(f"{test_data.endpoint.rstrip('/')}/health")
+                    response_time = time.time() - start_time
+                    
+                    if response.status_code == 200:
+                        return ServiceTestResponse(
+                            success=True,
+                            message="HTTP service is reachable",
+                            response_time=response_time,
+                            details={
+                                "status_code": response.status_code,
+                                "endpoint": test_data.endpoint
+                            }
+                        )
+                    else:
+                        return ServiceTestResponse(
+                            success=False,
+                            message=f"HTTP service responded with status {response.status_code}",
+                            response_time=response_time,
+                            details={
+                                "status_code": response.status_code,
+                                "endpoint": test_data.endpoint
+                            }
+                        )
+            except httpx.ConnectError:
+                return ServiceTestResponse(
+                    success=False,
+                    message="Connection refused - service may not be running",
+                    response_time=time.time() - start_time,
+                    details={"error": "connection_refused"}
+                )
+            except httpx.TimeoutException:
+                return ServiceTestResponse(
+                    success=False,
+                    message="Connection timeout - service is not responding",
+                    response_time=time.time() - start_time,
+                    details={"error": "timeout"}
+                )
+            except Exception as e:
+                return ServiceTestResponse(
+                    success=False,
+                    message=f"Connection failed: {str(e)}",
+                    response_time=time.time() - start_time,
+                    details={"error": str(e)}
+                )
+                
+        elif test_data.transport == "stdio":
+            if not test_data.command:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="command is required for STDIO transport test"
+                )
+            
+            # Test STDIO command availability
+            try:
+                command_name = test_data.command[0]
+                if shutil.which(command_name) is None:
+                    return ServiceTestResponse(
+                        success=False,
+                        message=f"Command '{command_name}' not found in PATH",
+                        response_time=time.time() - start_time,
+                        details={
+                            "error": "command_not_found",
+                            "command": command_name
+                        }
+                    )
+                
+                return ServiceTestResponse(
+                    success=True,
+                    message=f"Command '{command_name}' is available",
+                    response_time=time.time() - start_time,
+                    details={
+                        "command": command_name,
+                        "full_command": test_data.command
+                    }
+                )
+                
+            except Exception as e:
+                return ServiceTestResponse(
+                    success=False,
+                    message=f"Command test failed: {str(e)}",
+                    response_time=time.time() - start_time,
+                    details={"error": str(e)}
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported transport type: {test_data.transport}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Service connection test failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Connection test failed: {str(e)}"
+        )

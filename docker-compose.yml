@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: mcp-keycloak
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin123
+      KC_DB: dev-file
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+    ports:
+      - "8080:8080"
+    command: start-dev
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+    networks:
+      - mcp-shared
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  mcp-gateway:
+    build: .
+    container_name: mcp-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - ENABLE_AUTH=true
+      - KEYCLOAK_SERVER_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=BridgeMCP
+      - KEYCLOAK_CLIENT_ID=mcp-gateway
+      - KEYCLOAK_CLIENT_SECRET=7Hh8stp6hZsA61B6Jdd7HM1KzxMKw4qn
+      - TOKEN_AUDIENCE=mcp-gateway
+      - TOKEN_ISSUER=http://keycloak:8080/realms/BridgeMCP
+      - JWKS_CACHE_TTL=3600
+      - ENABLE_OBO=true
+      - OBO_CACHE_TTL=1800
+      - CLOCK_SKEW_TOLERANCE=300
+      - REQUIRED_SCOPES=["mcp:read","mcp:call"]
+      - ENABLE_RATE_LIMITING=true
+      - CORS_ORIGINS=["http://localhost:3000","http://localhost:8000","http://localhost:8080"]
+      - ALLOWED_HOSTS=["localhost","127.0.0.1","mcp-gateway"]
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    volumes:
+      - ./config:/app/config
+    networks:
+      - mcp-shared
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  keycloak_data:
+
+networks:
+  mcp-shared:
+    external: true

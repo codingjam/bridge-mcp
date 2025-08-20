@@ -49,28 +49,51 @@ export const AddServiceModal: React.FC<AddServiceModalProps> = ({
     setResult(null);
     
     try {
+      // Validate required fields
+      if (!formData.name.trim()) {
+        throw new Error('Service name is required');
+      }
+      
+      if (formData.transport === 'http' && !formData.endpoint?.trim()) {
+        throw new Error('Endpoint URL is required for HTTP transport');
+      }
+      
+      if (formData.transport === 'stdio' && !formData.command?.trim()) {
+        throw new Error('Command is required for STDIO transport');
+      }
+      
       const serviceData = {
-        name: formData.name,
-        description: formData.description,
+        name: formData.name.trim(),
+        description: formData.description.trim() || "",
         transport: formData.transport,
         enabled: true,
-        auth: {
-          strategy: formData.authStrategy
-        },
-        ...(formData.transport === 'http' 
-          ? { 
-              endpoint: formData.endpoint || '',
-              timeout: 5000,
-              health_check_path: '/health'
-            }
-          : { 
-              command: formData.command || '',
-              working_directory: '/tmp'
-            }
-        ),
         tags: []
       };
+      
+      // Add transport-specific fields
+      if (formData.transport === 'http') {
+        Object.assign(serviceData, {
+          endpoint: formData.endpoint!.trim(),
+          timeout: 30.0,
+          health_check_path: '/health'
+        });
+      } else if (formData.transport === 'stdio') {
+        Object.assign(serviceData, {
+          command: formData.command!.trim().split(/\s+/),
+          working_directory: '/tmp'
+        });
+      }
+      
+      // Add authentication
+      if (formData.authStrategy) {
+        Object.assign(serviceData, {
+          auth: {
+            strategy: formData.authStrategy
+          }
+        });
+      }
 
+      console.log('Sending service data:', serviceData);
       await createService.mutateAsync(serviceData as any);
       setResult({ type: 'success', message: 'Service created successfully!' });
       
@@ -89,9 +112,25 @@ export const AddServiceModal: React.FC<AddServiceModalProps> = ({
       }, 1500);
       
     } catch (error: any) {
+      console.error('Service creation error:', error);
+      let errorMessage = 'Failed to create service. Please try again.';
+      
+      if (error?.response?.data?.detail) {
+        // FastAPI validation error
+        if (Array.isArray(error.response.data.detail)) {
+          errorMessage = error.response.data.detail.map((err: any) => 
+            `${err.loc?.join('.')}: ${err.msg}`
+          ).join(', ');
+        } else {
+          errorMessage = error.response.data.detail;
+        }
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+      
       setResult({ 
         type: 'error', 
-        message: error?.message || 'Failed to create service. Please try again.' 
+        message: errorMessage
       });
     } finally {
       setLoading(false);
