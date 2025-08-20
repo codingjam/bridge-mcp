@@ -148,7 +148,7 @@ class ServiceRegistry:
                             f"Loaded service: {service_id}",
                             extra={
                                 "service_id": service_id,
-                                "name": service.name,
+                                "service_name": service.name,
                                 "transport": service.transport,
                                 "enabled": service.enabled,
                                 "has_auth": service_id in self._service_auth_configs
@@ -443,3 +443,130 @@ class ServiceRegistry:
             yaml.dump(default_config, f, default_flow_style=False, indent=2)
         
         logger.info(f"Created default configuration with auth examples at {self.config_path}")
+
+    async def add_service_to_config(self, service_id: str, service_config: Dict) -> None:
+        """
+        Add a new service to the YAML configuration file.
+        
+        Args:
+            service_id: Unique identifier for the service
+            service_config: Service configuration dictionary
+            
+        Raises:
+            ValueError: If service_id already exists
+            FileNotFoundError: If config file doesn't exist
+            yaml.YAMLError: If YAML is malformed
+        """
+        if not self.config_path.exists():
+            logger.error(f"Configuration file not found: {self.config_path}")
+            raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
+        
+        # Check if service already exists
+        if service_id in self.services:
+            raise ValueError(f"Service '{service_id}' already exists")
+        
+        try:
+            # Load current configuration
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+            
+            # Ensure services section exists
+            if 'services' not in config_data:
+                config_data['services'] = {}
+            
+            # Add new service
+            config_data['services'][service_id] = service_config
+            
+            # Write back to file
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, default_flow_style=False, indent=2)
+            
+            logger.info(f"Added service '{service_id}' to configuration file")
+            
+            # Reload services to update in-memory state
+            await self.load_services()
+            
+        except yaml.YAMLError as e:
+            logger.error(f"YAML error while adding service: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to add service to config: {e}")
+            raise
+
+    async def remove_service_from_config(self, service_id: str) -> None:
+        """
+        Remove a service from the YAML configuration file.
+        
+        Args:
+            service_id: Unique identifier for the service to remove
+            
+        Raises:
+            ValueError: If service_id doesn't exist
+            FileNotFoundError: If config file doesn't exist
+            yaml.YAMLError: If YAML is malformed
+        """
+        if not self.config_path.exists():
+            logger.error(f"Configuration file not found: {self.config_path}")
+            raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
+        
+        # Check if service exists
+        if service_id not in self.services:
+            raise ValueError(f"Service '{service_id}' does not exist")
+        
+        try:
+            # Load current configuration
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+            
+            # Remove service if it exists
+            if 'services' in config_data and service_id in config_data['services']:
+                del config_data['services'][service_id]
+                
+                # Write back to file
+                with open(self.config_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(config_data, f, default_flow_style=False, indent=2)
+                
+                logger.info(f"Removed service '{service_id}' from configuration file")
+                
+                # Reload services to update in-memory state
+                await self.load_services()
+            else:
+                raise ValueError(f"Service '{service_id}' not found in configuration file")
+            
+        except yaml.YAMLError as e:
+            logger.error(f"YAML error while removing service: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to remove service from config: {e}")
+            raise
+
+    def generate_service_id(self, name: str) -> str:
+        """
+        Generate a unique service ID from the service name.
+        
+        Args:
+            name: Human-readable service name
+            
+        Returns:
+            A unique service ID based on the name
+        """
+        import re
+        
+        # Convert name to lowercase and replace non-alphanumeric with hyphens
+        base_id = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+        
+        # Ensure it doesn't start or end with hyphen
+        base_id = re.sub(r'^-+|-+$', '', base_id)
+        
+        # Ensure it's not empty
+        if not base_id:
+            base_id = "service"
+        
+        # Check if ID exists and append number if needed
+        service_id = base_id
+        counter = 1
+        while service_id in self.services:
+            service_id = f"{base_id}-{counter}"
+            counter += 1
+        
+        return service_id
