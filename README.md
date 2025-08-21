@@ -1,4 +1,4 @@
-# MCP Gateway
+# Bridge MCP Gateway
 
 An open-source Model Context Protocol (MCP) Gateway for secure, scalable AI model interactions.
 
