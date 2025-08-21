@@ -1,5 +1,10 @@
 # Rate Limiting Quick Reference
 
+> **TL;DR for the production-ready rate limiting system**
+
+## Status
+**✅ Production Ready**: Implemented and operational as of Phase 1 completion (August 2025).
+
 ## TL;DR
 
 **Requirement**: Users cannot invoke a tool for a specific server more than 5 times per minute.

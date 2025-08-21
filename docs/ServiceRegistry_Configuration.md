@@ -1,5 +1,13 @@
 # ServiceRegistry Configuration Guide
 
+> **Configuration-driven service discovery and authentication management for MCP Gateway**
+
+## Status
+
+**✅ Production Ready**: The ServiceRegistry system is fully implemented and operational as of Phase 1 completion (August 2025). All authentication strategies and configuration options described here are working in production.
+
+**🔄 MCP Integration**: Currently being enhanced in Phase 2 to support MCP protocol compliance with Streamable HTTP transport and Python MCP SDK integration.
+
 ## Overview
 
 The ServiceRegistry is the central component of the MCP Gateway that manages service discovery, configuration, and authentication strategies. It provides a configuration-driven approach to defining how the gateway interacts with MCP services, including authentication requirements and service-specific settings.
