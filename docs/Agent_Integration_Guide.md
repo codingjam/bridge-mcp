@@ -6,6 +6,10 @@
 
 The MCP Gateway provides a centralized HTTP API that allows AI agents and MCP clients to discover and interact with multiple MCP servers through a single endpoint. This guide explains how to integrate your agent host with the gateway.
 
+**📋 Protocol Version**: This guide reflects MCP protocol specification 2025-03-26, using Streamable HTTP transport with single `/mcp/{service_id}` endpoints instead of deprecated Server-Sent Events (SSE) transport.
+
+**🚀 Current Status**: The gateway is currently in Phase 2 development, implementing full MCP compliance with the Python MCP SDK. Basic HTTP routing and authentication are operational.
+
 ## Quick Start
 
 ### 1. Gateway Endpoints
@@ -18,8 +22,8 @@ Base URL: http://localhost:8000/api/v1
 - GET  /services                           # Discover available MCP servers
 - GET  /services/{service_id}              # Get details about a specific server
 - GET  /services/{service_id}/health       # Check if a server is healthy
-- POST /mcp/{service_id}/call              # Make MCP protocol calls
-- ANY  /proxy/{service_id}/{path}          # Direct HTTP proxy to server
+- POST /mcp/{service_id}                   # MCP protocol calls (Streamable HTTP)
+- GET  /mcp/{service_id}                   # Optional server-push (if supported)
 ```
 
 ### 2. Basic Integration Flow
@@ -33,15 +37,15 @@ sequenceDiagram
     Agent->>Gateway: GET /services
     Gateway->>Agent: List of available servers
     
-    Agent->>Gateway: POST /mcp/{service_id}/call<br/>{"method": "tools/list"}
-    Gateway->>Server: Forward request
+    Agent->>Gateway: POST /mcp/{service_id}<br/>{"method": "tools/list"}
+    Gateway->>Server: Forward via Streamable HTTP
     Server->>Gateway: Available tools
-    Gateway->>Agent: Tools list
+    Gateway->>Agent: Tools list (JSON)
     
-    Agent->>Gateway: POST /mcp/{service_id}/call<br/>{"method": "tools/call", "params": {...}}
-    Gateway->>Server: Execute tool
+    Agent->>Gateway: POST /mcp/{service_id}<br/>{"method": "tools/call", "params": {...}}
+    Gateway->>Server: Execute tool via MCP SDK
     Server->>Gateway: Tool result
-    Gateway->>Agent: Result
+    Gateway->>Agent: Result (JSON or SSE)
 ```
 
 ## Step-by-Step Integration
@@ -135,7 +139,7 @@ GET http://localhost:8000/api/v1/services/filesystem/health
 For each service you want to use, discover what tools it provides:
 
 ```http
-POST http://localhost:8000/api/v1/mcp/filesystem/call
+POST http://localhost:8000/api/v1/mcp/filesystem
 Content-Type: application/json
 
 {
@@ -205,7 +209,7 @@ Content-Type: application/json
 Now you can call any tool on any service:
 
 ```http
-POST http://localhost:8000/api/v1/mcp/filesystem/call
+POST http://localhost:8000/api/v1/mcp/filesystem
 Content-Type: application/json
 
 {
@@ -233,6 +237,19 @@ Content-Type: application/json
 }
 ```
 
+### Step 5: Rate Limiting Awareness
+
+The gateway implements comprehensive rate limiting (5 requests per minute per user/service/tool combination). Your agent should handle 429 responses:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 45
+
+{
+  "detail": "Rate limit exceeded"
+}
+```
+
 ## Implementation Examples
 
 ### Python Agent Integration
@@ -257,7 +274,7 @@ class MCPGatewayClient:
     async def get_service_tools(self, service_id: str) -> List[Dict[str, Any]]:
         """Get available tools for a specific service"""
         response = await self.client.post(
-            f"{self.base_url}/mcp/{service_id}/call",
+            f"{self.base_url}/mcp/{service_id}",
             json={"method": "tools/list", "params": {}}
         )
         response.raise_for_status()
@@ -267,7 +284,7 @@ class MCPGatewayClient:
     async def call_tool(self, service_id: str, tool_name: str, **arguments) -> Any:
         """Execute a tool on a specific service"""
         response = await self.client.post(
-            f"{self.base_url}/mcp/{service_id}/call",
+            f"{self.base_url}/mcp/{service_id}",
             json={
                 "method": "tools/call",
                 "params": {
@@ -371,7 +388,7 @@ class MCPGatewayClient {
   }
 
   async getServiceTools(serviceId: string): Promise<MCPTool[]> {
-    const response = await fetch(`${this.baseUrl}/mcp/${serviceId}/call`, {
+    const response = await fetch(`${this.baseUrl}/mcp/${serviceId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -386,7 +403,7 @@ class MCPGatewayClient {
   }
 
   async callTool(serviceId: string, toolName: string, arguments: Record<string, any>): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/mcp/${serviceId}/call`, {
+    const response = await fetch(`${this.baseUrl}/mcp/${serviceId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -631,6 +648,23 @@ The gateway supports different authentication strategies per service:
 
 ## Troubleshooting
 
+### Current Development Status
+
+**Phase 1 Complete (August 2025)**: 
+- ✅ Authentication system (OIDC + OBO)
+- ✅ Rate limiting (5 requests/minute per user/service/tool)
+- ✅ Audit logging and monitoring
+- ✅ Service registry and configuration
+- ✅ Basic HTTP API endpoints
+
+**Phase 2 In Progress**: 
+- 🔄 MCP protocol compliance (Streamable HTTP)
+- 🔄 Python MCP SDK integration
+- 🔄 Session management and connection pooling
+- 🔄 Circuit breaker patterns
+
+**Note**: While basic HTTP endpoints are operational, full MCP protocol support is being finalized in the `mcp-spec-compliance` branch.
+
 ### Common Issues
 
 1. **Connection Refused**
@@ -692,7 +726,9 @@ logging.basicConfig(level=logging.DEBUG)
 
 ## Support
 
-- **Gateway Documentation**: See `README.md` for gateway setup
-- **MCP Specification**: https://modelcontextprotocol.io/
-- **Issues**: Report issues on the project repository
+- **Documentation**: See project README and implementation guides
+- **MCP Specification**: https://spec.modelcontextprotocol.io/
+- **Issues**: [Report issues on GitHub](https://github.com/codingjam/bridge-mcp/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/codingjam/bridge-mcp/discussions)
 - **Examples**: Check the `examples/` directory for more integration samples
+- **Contributing**: See [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines

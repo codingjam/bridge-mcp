@@ -1,4 +1,14 @@
-# MCP Gateway Compliance Implementation Plan
+# MCP Gateway Complia### Critical MCP Spec Compliance Issues ❌
+
+1. **No MCP Client Integration**: Current HTTP proxy doesn't use MCP protocol - need to integrate Python MCP client SDK
+2. **No Session Management**: Gateway treats each request independently - missing MCP session tracking and reuse
+3. **Missing Initialize Handshake**: No implementation of required MCP initialize/initialized flow
+4. **No Streamable HTTP Support**: Not using MCP's streamable HTTP transport (single /mcp endpoint with optional SSE responses)
+5. **Missing MCP Headers**: Not handling `Mcp-Session-Id` or `MCP-Protocol-Version`
+6. **No Session-Based Retries**: Missing retry logic for session expiry scenarios
+7. **No Concurrency Safety**: Potential race conditions in session creation
+
+**Note**: The legacy HTTP+SSE transport (two-endpoint model) is deprecated as of 2024-11-05. The replacement is Streamable HTTP (2025-03-26), which uses a single `/mcp` endpoint that can return JSON or SSE responses as needed.mentation Plan
 
 **Date**: August 19, 2025  
 **Repository**: bridge-mcp  
@@ -24,7 +34,7 @@ This document outlines the implementation plan to bring the MCP Gateway into ful
 1. **No MCP Client Integration**: Current HTTP proxy doesn't use MCP protocol - need to integrate Python MCP client SDK
 2. **No Session Management**: Gateway treats each request independently - missing MCP session tracking and reuse
 3. **Missing Initialize Handshake**: No implementation of required MCP initialize/initialized flow
-4. **No Streaming Support**: Buffering all responses instead of streaming `text/event-stream`
+4. **No Streamable HTTP Support**: Not using MCP's streamable HTTP transport (deprecated legacy HTTP+SSE transport as of 2025-03-26)
 5. **Missing MCP Headers**: Not handling `Mcp-Session-Id` or `MCP-Protocol-Version`
 6. **No Session-Based Retries**: Missing retry logic for session expiry scenarios
 7. **No Concurrency Safety**: Potential race conditions in session creation
@@ -235,9 +245,15 @@ class MCPSessionManager:
 - MCP client connection failure → Session creation failure
 - Auth token issues → Retry with fresh token via OBO service
 
-### Phase 3: Streaming Response Support 🌊
-**Priority**: HIGH - Required for real-time MCP interactions  
+### Phase 3: Streamable HTTP Response Support 🌊
+**Priority**: HIGH - Required for MCP protocol version 2025-03-26+  
 **Estimated Effort**: 2-3 days
+
+#### MCP Streamable HTTP Transport Overview:
+- **Single Endpoint**: All requests go to `/mcp` endpoint (POST for requests, optional GET for server-push)
+- **Response Modes**: Server can return `application/json` or `text/event-stream` based on request type
+- **GET Behavior**: Optional server-initiated notifications/events via SSE; return 405 if not supported
+- **Accept Header**: Clients must include `Accept: application/json, text/event-stream` on all requests
 
 #### Current Problem:
 ```python
@@ -248,26 +264,25 @@ return web.Response(body=response_content, ...)
 
 #### Target Implementation:
 ```python
-# Streaming via async iterator with proper SSE formatting and hardening
+# Streamable HTTP via SDK with proper response streaming
 from fastapi import Response
 from starlette.responses import StreamingResponse
 import json
 import asyncio
 import time
 
-async def sse_call_tool(session: MCPSession, tool_name: str, args: dict, correlation_id: str):
-    """Handle streaming tool calls with client disconnect handling and heartbeats"""
+async def streamable_call_tool(session: MCPSession, tool_name: str, args: dict, correlation_id: str):
+    """Handle streamable tool calls with client disconnect handling"""
     
     async def stream_generator():
-        last_heartbeat = time.time()
         last_activity = time.time()  # Track idle time for timeout
         chunk_count = 0
         first_byte_sent = False
         start_time = time.time()
         
         try:
-            # SDK yields events as async iterator
-            async for event in session.call_tool_stream(tool_name, args):
+            # SDK yields responses as async iterator (streamable HTTP with SSE format per spec)
+            async for response_chunk in session.call_tool_streamable(tool_name, args):
                 current_time = time.time()
                 last_activity = current_time  # Reset idle timer
                 
@@ -277,31 +292,25 @@ async def sse_call_tool(session: MCPSession, tool_name: str, args: dict, correla
                     logger.info("mcp_streaming_first_byte", latency_ms=first_byte_latency, correlation_id=correlation_id)
                     first_byte_sent = True
                 
-                # Size guard - cap event size to prevent memory spikes
-                event_data = json.dumps(event)
-                if len(event_data) > session.config.max_event_size:
-                    logger.warning("mcp_event_size_capped", original_size=len(event_data), 
+                # Size guard - cap response chunk size to prevent memory spikes
+                chunk_data = json.dumps(response_chunk)
+                if len(chunk_data) > session.config.max_event_size:
+                    logger.warning("mcp_chunk_size_capped", original_size=len(chunk_data), 
                                  capped_size=session.config.max_event_size, correlation_id=correlation_id)
                     # Truncate and mark as capped
-                    event_data = event_data[:session.config.max_event_size] + '...'
-                    yield f"data: {event_data}\n\n"
-                    yield f"data: {json.dumps({'error': 'Event truncated due to size limit'})}\n\n"
+                    chunk_data = chunk_data[:session.config.max_event_size] + '...'
+                    yield f"data: {chunk_data}\n\n"
+                    yield f"data: {json.dumps({'error': 'Response chunk truncated due to size limit'})}\n\n"
                 else:
-                    # Handle large events - split if needed (secondary chunking)
-                    if len(event_data) > session.config.stream_buffer_size:
-                        for i in range(0, len(event_data), session.config.stream_buffer_size):
-                            chunk = event_data[i:i + session.config.stream_buffer_size]
+                    # Handle large chunks - split if needed (secondary chunking)
+                    if len(chunk_data) > session.config.stream_buffer_size:
+                        for i in range(0, len(chunk_data), session.config.stream_buffer_size):
+                            chunk = chunk_data[i:i + session.config.stream_buffer_size]
                             yield f"data: {chunk}\n\n"
                             chunk_count += 1
                     else:
-                        yield f"data: {event_data}\n\n"
+                        yield f"data: {chunk_data}\n\n"
                         chunk_count += 1
-                
-                # Send periodic heartbeat if no events for a while
-                if (current_time - last_heartbeat) * 1000 > session.config.stream_heartbeat_interval_ms:
-                    yield f": heartbeat\n\n"  # Comment line for heartbeat
-                    last_heartbeat = current_time
-                    logger.debug("mcp_heartbeat_sent", elapsed_ms=(current_time - last_heartbeat) * 1000)
                 
                 # Check for idle timeout - proactively close abandoned streams
                 if (current_time - last_activity) * 1000 > session.config.stream_idle_timeout_ms:
@@ -324,7 +333,7 @@ async def sse_call_tool(session: MCPSession, tool_name: str, args: dict, correla
     
     return StreamingResponse(
         stream_generator(), 
-        media_type="text/event-stream",
+        media_type="text/event-stream",  # SSE format per MCP spec for streaming responses
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
@@ -332,8 +341,29 @@ async def sse_call_tool(session: MCPSession, tool_name: str, args: dict, correla
         }
     )
 
+async def handle_mcp_get_request(session: MCPSession):
+    """Handle optional GET requests for server-initiated notifications/events per MCP spec"""
+    # GET in Streamable HTTP is optional - used for long-lived notifications or server-initiated events
+    if not session.config.enable_server_push:
+        # Return 405 Method Not Allowed if server-push not supported
+        raise HTTPException(status_code=405, detail="GET method not supported - no server-initiated events")
+    
+    # TODO: Implement server-initiated SSE stream for notifications
+    async def server_push_generator():
+        # Server can send notifications/requests to client via SSE
+        while True:
+            # Wait for server-initiated events (placeholder implementation)
+            await asyncio.sleep(30)  # Replace with actual event waiting
+            yield f"data: {json.dumps({'type': 'ping', 'timestamp': time.time()})}\n\n"
+    
+    return StreamingResponse(
+        server_push_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+    )
+
 async def proxy_mcp_request(session: MCPSession, tool_name: str, args: dict, correlation_id: str):
-    """Route to streaming or non-streaming with partial stream protection and size guards"""
+    """Route to streamable or non-streamable with partial stream protection and size guards"""
     
     # Size guard for request JSON
     request_size = len(json.dumps(args))
@@ -346,55 +376,58 @@ async def proxy_mcp_request(session: MCPSession, tool_name: str, args: dict, cor
         logger.warning("mcp_retry_blocked", reason="partial_stream_sent", correlation_id=correlation_id)
         raise HTTPException(status_code=409, detail="Cannot retry after partial stream output")
     
-    # Check if tool supports streaming
+    # Check if tool supports streamable responses
     tools = await session.list_tools()
     tool_def = next((t for t in tools if t.name == tool_name), None)
     
-    if tool_def and getattr(tool_def, 'supports_streaming', False):
+    if tool_def and getattr(tool_def, 'supports_streamable', False):
         session._partial_stream_sent = True  # Mark to prevent retries
-        return await sse_call_tool(session, tool_name, args, correlation_id)
+        return await streamable_call_tool(session, tool_name, args, correlation_id)
     else:
-        # Non-streaming call
+        # Non-streamable call
         result = await session.call_tool(tool_name, args)
         return JSONResponse(result)
 ```
 
 #### Alternative for Callback-Based SDKs:
 ```python
-# If SDK uses callbacks instead of async iterator
+# If SDK uses callbacks instead of async iterator for streamable responses
 import asyncio
 from typing import AsyncGenerator
 
 async def callback_to_async_generator(session: MCPSession, tool_name: str, args: dict) -> AsyncGenerator[dict, None]:
-    """Convert callback-based streaming to async generator"""
+    """Convert callback-based streamable responses to async generator"""
     queue = asyncio.Queue()
     
-    def on_event(event):
-        queue.put_nowait(event)
+    def on_response_chunk(chunk):
+        queue.put_nowait(chunk)
     
     def on_complete():
         queue.put_nowait(None)  # Sentinel for completion
     
-    # Start streaming with callbacks
-    await session.call_tool_stream_callback(tool_name, args, on_event, on_complete)
+    # Start streamable call with callbacks
+    await session.call_tool_streamable_callback(tool_name, args, on_response_chunk, on_complete)
     
     # Yield from queue until completion
     while True:
-        event = await queue.get()
-        if event is None:  # Completion sentinel
+        chunk = await queue.get()
+        if chunk is None:  # Completion sentinel
             break
-        yield event
+        yield chunk
 ```
 
 #### Changes Needed:
-- **SDK Streaming Integration**: Use async generators that iterate over SDK-emitted chunks
+- **SDK Streamable Integration**: Use async generators that iterate over SDK-emitted response chunks
 - **Prompt Flushing**: Ensure real-time streaming with immediate chunk forwarding
-- **FastAPI Integration**: Return `StreamingResponse` with proper SSE headers
+- **FastAPI Integration**: Return `StreamingResponse` with proper SSE headers for streaming, JSON for non-streaming
 - **Connection Management**: Handle client disconnections and dead stream detection
+- **Accept Header**: Include `Accept: application/json, text/event-stream` on POST requests per spec
+- **GET Support**: Optional SSE stream via GET to same /mcp endpoint (or return 405 if not supported)
 
 #### Modified Files:
-- `src/mcp_gateway/core/proxy.py` - Replace `_process_response` with streaming logic
-- `src/mcp_gateway/api/routes.py` - Return `StreamingResponse` for streaming content
+- `src/mcp_gateway/core/proxy.py` - Replace `_process_response` with streamable logic
+- `src/mcp_gateway/api/routes.py` - Return `StreamingResponse` for streamable content, JSONResponse for non-streaming
+- `src/mcp_gateway/api/routes.py` - Add GET /mcp endpoint for optional SSE push (or return 405)
 
 ### Phase 4: MCP-Compliant Header Management 📋
 **Priority**: MEDIUM - Protocol compliance  
@@ -403,6 +436,7 @@ async def callback_to_async_generator(session: MCPSession, tool_name: str, args:
 #### SDK Header Management:
 - **SDK Handles MCP Headers**: After init, SDK automatically manages `Mcp-Session-Id`, `MCP-Protocol-Version`
 - **Transport-Level Auth**: Set `Authorization` header when creating transport via `streamablehttp_client()`
+- **Accept Header**: Include `Accept: application/json, text/event-stream` on POST requests per spec
 - **Gateway Headers Only**: Focus on headers for fallback raw HTTP calls, not SDK-managed requests
 
 #### Required Headers for Transport Creation:
@@ -411,11 +445,16 @@ async def callback_to_async_generator(session: MCPSession, tool_name: str, args:
 headers = {
     "Authorization": f"Bearer {auth_token}",  # OBO token
     "User-Agent": "MCP Gateway/1.0.0",       # Optional
-    "Accept": "application/json, text/event-stream"
+    "Accept": "application/json, text/event-stream"  # Required per spec
 }
 # DO NOT manually set Mcp-Session-Id or MCP-Protocol-Version - SDK handles these
 read, write, _meta = await streamablehttp_client(AnyUrl(server_url), extra_headers=headers).__aenter__()
 ```
+
+#### Fallback HTTP Requirements:
+- **MCP-Protocol-Version**: Include on all subsequent requests when not using SDK
+- **Authorization**: Always include Bearer token per auth section
+- **Accept**: Must include both JSON and SSE support per spec
 
 #### Scope of Phase 4:
 - **Fallback HTTP Requests**: Headers for non-SDK calls (health checks, etc.)
@@ -535,17 +574,17 @@ logger.info("mcp_initialize_start", client_id=client_id, server_url=server_url, 
 logger.info("mcp_initialize_success", client_id=client_id, server_url=server_url, latency_ms=latency, correlation_id=correlation_id)
 logger.info("mcp_initialized_sent", client_id=client_id, status_code=202)
 
-# Streaming responses with hashed identifiers for safety and size guards
+# Streamable responses with hashed identifiers for safety and size guards
 client_hash = hashlib.sha256(f"{client_id}:{server_url}".encode()).hexdigest()[:8]
-logger.info("mcp_streaming_start", tool_name=tool_name, client_hash=client_hash, correlation_id=correlation_id)
-logger.warning("mcp_event_size_capped", original_size=len(event_data), capped_size=config.max_event_size, client_hash=client_hash)
-logger.info("mcp_streaming_chunk", bytes_sent=len(chunk), total_chunks=chunk_count, client_hash=client_hash)
-logger.info("mcp_streaming_first_byte", latency_ms=first_byte_latency, correlation_id=correlation_id)
+logger.info("mcp_streamable_start", tool_name=tool_name, client_hash=client_hash, correlation_id=correlation_id)
+logger.warning("mcp_chunk_size_capped", original_size=len(chunk_data), capped_size=config.max_event_size, client_hash=client_hash)
+logger.info("mcp_streamable_chunk", bytes_sent=len(chunk), total_chunks=chunk_count, client_hash=client_hash)
+logger.info("mcp_streamable_first_byte", latency_ms=first_byte_latency, correlation_id=correlation_id)
 logger.warning("mcp_stream_idle_timeout", client_hash=client_hash, idle_duration_ms=idle_duration)
 
-# Client disconnects and heartbeats
+# Client disconnects and connection management (no SSE heartbeats needed)
 logger.warning("mcp_client_disconnect", tool_name=tool_name, client_hash=client_hash, reason="cancelled_error")
-logger.debug("mcp_heartbeat_sent", client_hash=client_hash, elapsed_ms=elapsed_since_last_event)
+logger.debug("mcp_connection_keepalive", client_hash=client_hash, elapsed_ms=elapsed_since_last_activity)
 
 # Retry attempts with reasons and limits - stable retry_id for correlation
 retry_id = str(uuid.uuid4())[:8]  # Short stable ID for retry correlation
@@ -633,7 +672,7 @@ class MCPConfig:
     stream_ping_timeout_ms: int = 30000  # Detect dead streams
     stream_idle_timeout_ms: int = 300000  # 5min idle timeout - proactively close abandoned streams
     stream_buffer_size: int = 8192       # Max chunk size before splitting
-    stream_heartbeat_interval_ms: int = 10000  # Keep connections alive
+    stream_keepalive_interval_ms: int = 10000  # Connection keepalive (no SSE heartbeats needed)
     
     # Concurrency and circuit breaker settings
     max_concurrent_sessions_per_server: int = 100
@@ -649,16 +688,19 @@ class MCPConfig:
     rate_limit_before_session: bool = True       # Cheap rejection
     rate_limit_after_obo: bool = True           # Protect downstream
     json_call_rate_limit: int = 100             # Per minute
-    streaming_call_rate_limit: int = 10         # Per minute (more expensive)
+    streamable_call_rate_limit: int = 10       # Per minute (more expensive)
     
     # Horizontal scaling
     use_redis_for_sessions: bool = False        # Config flip for scaling
     redis_session_prefix: str = "mcp_gateway_sessions"
     redis_lock_prefix: str = "mcp_gateway_locks"
     
-    # Future extensibility - server-push notifications
-    enable_server_push: bool = False            # TODO: GET /mcp SSE endpoint for notifications
+    # Future extensibility - server-push notifications via GET /mcp SSE
+    enable_server_push: bool = False            # TODO: GET /mcp SSE endpoint for optional server-initiated notifications
+    server_push_return_405: bool = True         # Return 405 Method Not Allowed if GET /mcp not supported
 ```
+
+**Note**: SSE as a standalone (two-endpoint) transport is deprecated as of 2024-11-05. Streamable HTTP (2025-03-26) — a single `/mcp` endpoint with optional SSE responses — is now the standard.
 
 ## Testing Strategy
 
@@ -672,7 +714,7 @@ class MCPConfig:
 
 ### Integration Tests:
 - **End-to-End Session Flow**: Client → Gateway → ClientSession → MCP Server
-- **Streaming Responses**: SSE forwarding via async generators from SDK
+- **Streamable Responses**: SSE forwarding via async generators from SDK (per spec)
 - **Concurrent Client Handling**: Multiple clients, same server with proper locking
 - **Error Recovery**: Session invalidation and retry with categorized failures
 - **Transport Lifecycle**: Proper cleanup and re-creation scenarios
@@ -683,13 +725,13 @@ class MCPConfig:
   - `initialize()` → **200 + JSON** (never 202)
   - `notifications/initialized` → **202 + empty** (critical: ONLY this returns 202) - **FIRST TEST IN CI**
   - `list_tools()` → **200 + JSON**
-  - Streaming tool calls → **text/event-stream** with multiple chunks and flushing
+  - Streamable tool calls → **text/event-stream** with multiple chunks and flushing (SSE format per spec)
 - **Notification Contract**: Explicitly verify no other method returns 202 (prevents VS Code auth loop bugs)
 - **Body Replay Test**: Ensure request body can be read twice (prevents empty initialize payload)
-- **Size Guard Tests**: Test request JSON size limits and event size capping
-- **Streaming Hardening**: Test client disconnect handling and heartbeat delivery
+- **Size Guard Tests**: Test request JSON size limits and response chunk size capping
+- **Streamable Hardening**: Test client disconnect handling and connection management
 - **Stream Idle Timeout**: Test proactive stream closure on idle timeout
-- **Partial Stream Protection**: Verify retries are blocked after streaming starts
+- **Partial Stream Protection**: Verify retries are blocked after streamable response starts
 - **OBO Failure Modes**: Test expired tokens, invalid audience, missing scope
 - **Correct 401 vs 403 mapping**: Map upstream errors appropriately
 - **Circuit Breaker**: Test failure threshold, timeout, and recovery scenarios
@@ -697,8 +739,8 @@ class MCPConfig:
 
 ### Performance Tests:
 - **Session Storage Performance**: High session volume with ClientSession instances
-- **Size Guard Performance**: Impact of JSON size validation and event size capping
-- **Streaming Throughput**: Large SSE responses via async generators with backpressure and idle timeout
+- **Size Guard Performance**: Impact of JSON size validation and response chunk size capping
+- **Streamable Throughput**: Large SSE responses via async generators with backpressure and idle timeout
 - **Concurrent Request Handling**: Load testing with transport connection pooling
 - **Memory Usage**: ClientSession and transport lifecycle efficiency with size limits
 - **Lock Contention**: Performance under high concurrency with dual-lock strategy
@@ -930,7 +972,7 @@ class RedisSessionManager(MCPSessionManager):
 - **Backward Compatibility**: Existing clients may need updates
 - **MCP SDK Dependency**: Reliance on Python MCP SDK stability and updates
 - **Transport Connection Limits**: Managing connection pool sizes per server
-- **Streaming Backpressure**: Large events could impact TTFB if not properly chunked
+- **Streaming Backpressure**: Large responses could impact TTFB if not properly chunked (using SSE format per spec)
 
 ### Medium Risk:
 - **Memory Usage**: Session storage growth with ClientSession instances over time
@@ -949,20 +991,20 @@ class RedisSessionManager(MCPSessionManager):
 - **Connection Limits**: Configurable limits and circuit breakers for transport connections
 - **Backpressure Controls**: Stream buffer size limits and event chunking for large payloads
 - **Fallback Mechanisms**: Local-only mode as fallback when Redis is unavailable
-- **Rate Limiting Strategy**: Dual rate limiting (before session + after OBO) with different limits for JSON vs streaming
+- **Rate Limiting Strategy**: Dual rate limiting (before session + after OBO) with different limits for JSON vs streamable responses
 
 ## Success Criteria
 
 ### MCP Compliance:
 - ✅ Proper session management per client using ClientSession instances
 - ✅ Complete initialize/initialized handshake via MCP SDK (200 + 202 semantics)
-- ✅ Streaming response support via async generators with prompt flushing
+- ✅ Streamable HTTP response support via async generators with prompt flushing
 - ✅ SDK-managed header handling with transport-level auth setup
 - ✅ Category-based retry logic with OBO token refresh and session re-init
 
 ### Performance:
 - 📈 No significant latency increase for JSON responses
-- 📈 Efficient streaming for SSE responses via async generators
+- 📈 Efficient streamable responses via async generators with NDJSON format
 - 📈 Stable memory usage with ClientSession and transport cleanup
 - 📈 Optimized connection pooling and reuse across requests
 
@@ -986,7 +1028,7 @@ class RedisSessionManager(MCPSessionManager):
 7. **Iterative Development** - Phase-by-phase implementation with size guards and streaming hardening
 8. **Testing at Each Phase** - Comprehensive test coverage including retry correlation
 9. **Documentation Updates** - User and developer guides
-10. **TODO: Future Server-Push** - Reserve GET /mcp SSE endpoint for notifications when `enable_server_push=true`
+9. **TODO: Future Server-Push** - Optional GET /mcp SSE endpoint for server-initiated notifications (or return 405)
 
 ---
 

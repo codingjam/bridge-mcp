@@ -8,19 +8,32 @@ The MCP Gateway acts as a centralized proxy and security layer for MCP servers, 
 
 ## Features
 
-### Current (Phase 1 - MVP)
-- ✅ FastAPI-based async HTTP server
-- ✅ Configurable service registry (YAML configuration)
-- ✅ Structured logging with JSON output
-- ✅ Health check endpoints
-- ✅ Environment-based configuration with Pydantic
-- ✅ Docker-ready containerization
-- ✅ Comprehensive test suite with pytest
+### Current (Phase 1 - MVP) ✅
+- ✅ **FastAPI-based async HTTP server** with MCP protocol foundation
+- ✅ **Complete OIDC Authentication System** with Keycloak integration and JWT validation
+- ✅ **OAuth2 On-Behalf-Of (OBO) Flow** with automatic token exchange and caching
+- ✅ **Configurable service registry** with YAML configuration and authentication strategies
+- ✅ **Production-grade HTTP proxy** with timeout handling and error management
+- ✅ **Comprehensive audit system** with structured logging and event tracking
+- ✅ **Rate limiting system** (Redis-based distributed rate limiting)
+- ✅ **Health check endpoints** with real-time service monitoring
+- ✅ **Dashboard frontend** (React/TypeScript for service management)
+- ✅ **Docker-ready containerization** with docker-compose examples
 
-### Planned Features
-- **Phase 2**: OAuth 2.0/OIDC authentication, RBAC, rate limiting
-- **Phase 3**: Dynamic service discovery, policy engine (OPA), Prometheus metrics
-- **Phase 4**: Multi-tenancy, audit logging, data masking
+### In Progress (Phase 2 - MCP Protocol Compliance) 🚧
+- 🟡 **MCP Client SDK Integration** - Official Python MCP SDK implementation
+- 🟡 **Session Management** - Per-client session isolation with connection pooling
+- 🟡 **Initialize Handshake** - Required MCP initialize/initialized flow
+- 🟡 **Streamable HTTP Support** - Single /mcp endpoint with JSON/SSE responses
+- 🟡 **Circuit Breaker Protection** - Per-client failure isolation and recovery
+- 🟡 **Enhanced Error Recovery** - Category-based retries with OBO token refresh
+
+### Planned Features (Phase 3+)
+- **RBAC & Policy Engine**: Role-based access control with Open Policy Agent (OPA)
+- **Advanced Monitoring**: Prometheus metrics and Grafana dashboards
+- **Transport Bridging**: HTTP ↔ stdio protocol interoperability
+- **Multi-tenancy**: Tenant isolation and resource quotas
+- **Plugin Architecture**: Third-party integrations and community extensions
 
 ## Dashboard (Under Development)
 
@@ -223,31 +236,52 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 
 ### Technology Stack
 
-- **Framework**: FastAPI with async/await support
-- **Configuration**: Pydantic for settings validation
-- **Logging**: Structlog for structured JSON logging
-- **Testing**: pytest with coverage
-- **Code Quality**: black, isort, flake8, mypy
-- **Package Management**: uv for fast dependency resolution
+- **Framework**: FastAPI with async/await support and MCP protocol compliance
+- **MCP Integration**: Official Python MCP SDK with session management and streaming
+- **Authentication**: Authlib for OAuth/OIDC, OBO token exchange with Keycloak
+- **Rate Limiting**: Redis-based distributed rate limiting with configurable policies
+- **Configuration**: Pydantic for settings validation and environment variables
+- **Logging**: Structlog for structured JSON logging with audit trails
+- **Testing**: pytest with comprehensive coverage and contract testing
+- **Code Quality**: black, isort, flake8, mypy with pre-commit hooks
+- **Package Management**: uv for fast dependency resolution and virtual environments
+- **Frontend**: React/TypeScript dashboard with Ant Design components
 
 ### Design Principles
 
-- **Security First**: Secure defaults and zero-trust architecture
-- **Cloud Native**: Container-ready with health checks and metrics
-- **Developer Experience**: Comprehensive tooling and documentation
-- **Performance**: Async/await for high concurrency
-- **Observability**: Structured logging and metrics built-in
+- **MCP Compliance First**: Full adherence to Model Context Protocol specification
+- **Security First**: Secure defaults, zero-trust architecture, and comprehensive audit trails
+- **Cloud Native**: Container-ready with health checks, metrics, and horizontal scaling
+- **Developer Experience**: Comprehensive tooling, documentation, and clear contribution guidelines
+- **Performance**: Async/await for high concurrency with session pooling and circuit breakers
+- **Observability**: Structured logging, metrics, tracing, and real-time monitoring built-in
 
 ## Roadmap
 
-See our [Product Requirements Document](docs/MCP_Gateway_PRD.md) for detailed feature roadmap and technical specifications.
+### Current Status: Phase 2 Implementation 🚧
+**MCP Protocol Compliance** - Implementing full Model Context Protocol support with session management, streamable HTTP, and enhanced authentication.
+
+**Branch**: `mcp-spec-compliance`  
+**Timeline**: 2-3 weeks for complete MCP compliance  
+**Documentation**: [MCP Compliance Implementation Plan](docs/MCP_Compliance_Implementation_Plan.md)
+
+### Detailed Roadmap
+See our [Product Requirements Document](docs/MCP_Gateway_PRD.md) for detailed feature roadmap, technical specifications, and implementation phases.
 
 ## License
 
 This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
 
-## Support
+## Support & Community
 
-- 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/your-org/mcp-gateway/issues)
-- 💬 [Discussions](https://github.com/your-org/mcp-gateway/discussions)
+- 📖 **Documentation**: [Technical Docs](docs/) | [Implementation Plan](docs/MCP_Compliance_Implementation_Plan.md)
+- 🐛 **Issue Tracker**: [GitHub Issues](https://github.com/codingjam/bridge-mcp/issues) for bug reports and feature requests
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/codingjam/bridge-mcp/discussions) for questions and community chat
+- 🤝 **Contributing**: See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines
+- 📧 **Contact**: Reach out via GitHub Issues or Discussions for project-related inquiries
+
+### Getting Help
+1. **Check existing issues** - Your question might already be answered
+2. **Browse the documentation** - Comprehensive guides and API references
+3. **Start a discussion** - For questions, ideas, or general community interaction
+4. **Open an issue** - For bug reports or specific feature requests
