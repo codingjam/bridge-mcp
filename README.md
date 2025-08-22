@@ -6,6 +6,8 @@ In modern enterprises, teams often deploy a diverse set of services, tools, and 
 
 Traditionally, integrating multiple clients with multiple backend services leads to an m×n explosion of direct connections, custom authentication logic, and inconsistent security enforcement. The MCP Gateway eliminates this complexity by acting as a single, standardized interface: clients connect to the gateway, which securely proxies and manages all interactions with registered MCP services. This architecture decouples clients from backend details, simplifies network topology, and ensures that all traffic is governed by unified authentication, authorization, and auditing policies.
 
+If you are curious to read more - https://medium.com/towards-artificial-intelligence/the-bridge-to-mcp-scaling-ai-tools-with-gateways-e5dd2e9547f8
+
 ## Overview
 
 The MCP Gateway acts as a centralized proxy and security layer for MCP servers, enabling secure access control, authentication, monitoring, and protocol bridging for any MCP-compliant service.
