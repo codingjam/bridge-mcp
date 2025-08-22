@@ -1,10 +1,14 @@
 # Bridge MCP Gateway
 
-An open-source Model Context Protocol (MCP) Gateway for secure, scalable AI model interactions.
+An open-source Model Context Protocol (MCP) Gateway for secure, scalable, and protocol-compliant AI-tool integration.
+
+In modern enterprises, teams often deploy a diverse set of services, tools, and agents that need to interact securely and efficiently. The MCP Gateway provides a unified entry point for all MCP-compliant services, standardizing authentication, authorization, auditing, and protocol handling. By centralizing these concerns, the gateway reduces integration complexity, enforces consistent security policies, enables observability, and accelerates onboarding of new services—making it easier for organizations to scale, govern, and monitor their service ecosystem.
+
+Traditionally, integrating multiple clients with multiple backend services leads to an m×n explosion of direct connections, custom authentication logic, and inconsistent security enforcement. The MCP Gateway eliminates this complexity by acting as a single, standardized interface: clients connect to the gateway, which securely proxies and manages all interactions with registered MCP services. This architecture decouples clients from backend details, simplifies network topology, and ensures that all traffic is governed by unified authentication, authorization, and auditing policies.
 
 ## Overview
 
-The MCP Gateway acts as a centralized proxy and security layer for MCP servers, enabling secure access control, authentication, monitoring, and protocol bridging for AI model interactions.
+The MCP Gateway acts as a centralized proxy and security layer for MCP servers, enabling secure access control, authentication, monitoring, and protocol bridging for any MCP-compliant service.
 
 ## Features
 
@@ -27,6 +31,10 @@ The MCP Gateway acts as a centralized proxy and security layer for MCP servers, 
 - 🟡 **Streamable HTTP Support** - Single /mcp endpoint with JSON/SSE responses
 - 🟡 **Circuit Breaker Protection** - Per-client failure isolation and recovery
 - 🟡 **Enhanced Error Recovery** - Category-based retries with OBO token refresh
+
+
+### MCP Compliance Implementation
+- 📄 [MCP Compliance Implementation Plan](docs/MCP_Compliance_Implementation_Plan.md)
 
 ### Planned Features (Phase 3+)
 - **RBAC & Policy Engine**: Role-based access control with Open Policy Agent (OPA)
