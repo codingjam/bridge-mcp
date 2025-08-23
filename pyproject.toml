@@ -30,6 +30,7 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "redis>=5.0.0",
     "prometheus-client>=0.19.0",
+    "mcp[cli]>=1.13.1",
 ]
 
 [project.optional-dependencies]
@@ -101,3 +102,13 @@ minversion = "7.0"
 addopts = "-ra -q --strict-markers --cov=mcp_gateway --cov-report=term-missing"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: marks tests as integration tests (may require external services)",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.2.1",
+]
