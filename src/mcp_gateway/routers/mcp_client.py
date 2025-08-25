@@ -420,13 +420,3 @@ async def call_tool(
             status_code=500,
             detail="Internal server error"
         )
-
-
-@mcp_router.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint for MCP client."""
-    return HealthResponse(
-        status="healthy",
-        timestamp=str(asyncio.get_event_loop().time()),
-        details={"mcp_client": "operational"}
-    )

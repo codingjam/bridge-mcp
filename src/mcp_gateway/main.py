@@ -210,6 +210,20 @@ def create_app() -> FastAPI:
     app.include_router(mcp_router, prefix="/api/v1")          # Native MCP client  
     app.include_router(dashboard_router, prefix="/api/v1")    # Dashboard management
     
+    # Health endpoint - accessible without authentication
+    @app.get("/health", tags=["health"])
+    async def health_check():
+        """
+        Health check endpoint for monitoring and load balancers.
+        Accessible without authentication.
+        """
+        return {
+            "status": "healthy",
+            "service": "MCP Gateway",
+            "version": "0.1.0",
+            "timestamp": "2025-08-24T20:30:00Z"
+        }
+    
     # Root endpoint
     @app.get("/", tags=["health"])
     async def root():
@@ -229,7 +243,7 @@ def create_app() -> FastAPI:
                 "base_url": "/api/v1"
             },
             "endpoints": {
-                "health": "/api/v1/health",
+                "health": "/health",
                 "services": "/api/v1/services",
                 "service_detail": "/api/v1/services/{service_id}",
                 "service_health": "/api/v1/services/{service_id}/health",

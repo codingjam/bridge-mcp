@@ -41,16 +41,6 @@ async def get_service_registry() -> ServiceRegistry:
     return await get_registry()
 
 
-@dashboard_router.get("/health", response_model=HealthResponse)
-async def dashboard_health():
-    """Health check endpoint for dashboard."""
-    return HealthResponse(
-        status="healthy",
-        timestamp=str(asyncio.get_event_loop().time()),
-        details={"dashboard": "operational"}
-    )
-
-
 @dashboard_router.post("/services", response_model=ServiceCreateResponse)
 async def create_service(
     request: ServiceCreateRequest,
