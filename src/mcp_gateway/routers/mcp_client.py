@@ -76,7 +76,6 @@ async def get_proxy_service(
     REUSES the exact same pattern as api/routes.py
     """
     return AuthenticatedMCPProxyService(
-        service_registry=service_registry,
         obo_service=obo_service
     )
 
@@ -95,6 +94,8 @@ async def get_mcp_client() -> MCPClientWrapper:
     global _mcp_client
     if _mcp_client is None:
         _mcp_client = MCPClientWrapper()
+        # Initialize the client (start session manager)
+        await _mcp_client.__aenter__()
     return _mcp_client
 
 
@@ -155,14 +156,17 @@ async def mcp_simple_proxy(
         # Handle authentication based on service auth strategy
         headers = {}
         
-        if service.auth.strategy in ["obo_required", "passthrough"]:
+        # Get the proper MCPServiceAuth object from registry
+        service_auth = await registry.get_service_auth(server_name)
+        
+        if service_auth and service_auth.auth_strategy.value in ["obo_required", "passthrough"]:
             if not user_token:
                 raise HTTPException(
                     status_code=401,
                     detail="Authentication required for this service"
                 )
             
-            if service.auth.strategy == "obo_required":
+            if service_auth.auth_strategy.value == "obo_required":
                 # Use OBO token exchange (same pattern as routes.py)
                 if not proxy.obo_service:
                     raise HTTPException(
@@ -170,14 +174,23 @@ async def mcp_simple_proxy(
                         detail="OBO service not configured"
                     )
                 
+                # Get token claims from request state (already validated by auth middleware)
+                user_claims = getattr(http_request.state, 'token_claims', None)
+                if not user_claims:
+                    raise HTTPException(
+                        status_code=401,
+                        detail="No token claims available"
+                    )
+                
                 # Get OBO token for the target service
-                obo_token = await proxy._get_obo_token(
-                    downstream_token=user_token,
-                    target_audience=service.auth.target_audience
+                obo_token = await proxy.obo_service.get_service_token(
+                    user_token=user_token,
+                    user_claims=user_claims,
+                    service_config=service_auth
                 )
                 headers["Authorization"] = f"Bearer {obo_token}"
                 
-            elif service.auth.strategy == "passthrough":
+            elif service_auth.auth_strategy.value == "passthrough":
                 # Pass through the original token
                 headers["Authorization"] = f"Bearer {user_token}"
         
@@ -262,17 +275,31 @@ async def connect_server(
         # Extract access token from request (same pattern as routes.py)
         user_token = get_access_token(http_request)
         
-        # Handle authentication based on service auth strategy
-        transport_config = request.transport_config.copy()
+        # Always build transport config from service configuration
+        transport_config = {
+            "type": service.transport,
+            "url": str(service.endpoint)
+        }
         
-        if service.auth.strategy in ["obo_required", "passthrough"]:
+        # Add service-specific config based on transport type
+        if service.transport == "stdio" and service.command:
+            transport_config["command"] = service.command
+            if service.working_directory:
+                transport_config["working_directory"] = service.working_directory
+            if service.environment:
+                transport_config["environment"] = service.environment
+        
+        # Get the proper MCPServiceAuth object from registry
+        service_auth = await registry.get_service_auth(request.server_name)
+        
+        if service_auth and service_auth.auth_strategy.value in ["obo_required", "passthrough"]:
             if not user_token:
                 raise HTTPException(
                     status_code=401,
                     detail="Authentication required for this service"
                 )
             
-            if service.auth.strategy == "obo_required":
+            if service_auth.auth_strategy.value == "obo_required":
                 # Use OBO token exchange (same pattern as routes.py)
                 if not proxy.obo_service:
                     raise HTTPException(
@@ -280,17 +307,26 @@ async def connect_server(
                         detail="OBO service not configured"
                     )
                 
+                # Get token claims from request state (already validated by auth middleware)
+                user_claims = getattr(http_request.state, 'token_claims', None)
+                if not user_claims:
+                    raise HTTPException(
+                        status_code=401,
+                        detail="No token claims available"
+                    )
+                
                 # Get OBO token for the target service
-                obo_token = await proxy._get_obo_token(
-                    downstream_token=user_token,
-                    target_audience=service.auth.target_audience
+                obo_token = await proxy.obo_service.get_service_token(
+                    user_token=user_token,
+                    user_claims=user_claims,
+                    service_config=service_auth
                 )
                 
                 # Add OBO token to transport config
                 transport_config.setdefault("headers", {})
                 transport_config["headers"]["Authorization"] = f"Bearer {obo_token}"
                 
-            elif service.auth.strategy == "passthrough":
+            elif service_auth.auth_strategy.value == "passthrough":
                 # Pass through the original token
                 transport_config.setdefault("headers", {})
                 transport_config["headers"]["Authorization"] = f"Bearer {user_token}"

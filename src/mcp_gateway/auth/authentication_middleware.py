@@ -79,7 +79,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         """
         # Skip authentication for public endpoints
         if self._is_public_endpoint(request.url.path):
-            logger.debug(f"Skipping authentication for public endpoint: {request.url.path}")
+            logger.info(f"Skipping authentication for public endpoint: {request.url.path}")
             return await call_next(request)
         
         # Skip authentication for OPTIONS requests (CORS preflight)
@@ -93,9 +93,10 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             if user_context:
                 # Add user context to request state
                 request.state.user = user_context
+                request.state.user_id = user_context.user_id  # Add this for rate limiter
                 request.state.authenticated = True
                 
-                logger.debug(
+                logger.info(
                     "Request authenticated successfully",
                     extra={
                         "user_id": user_context.user_id,
@@ -201,10 +202,57 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         # Extract Bearer token from Authorization header
         token = self._extract_bearer_token(request)
         if not token:
+            logger.warning(
+                "Authentication failed: Missing or invalid Authorization header",
+                extra={
+                    "path": request.url.path,
+                    "method": request.method,
+                    "headers": dict(request.headers),
+                    "remote_addr": request.client.host if request.client else None
+                }
+            )
             raise AuthenticationError("Missing or invalid Authorization header")
         
+        logger.info(
+            "Extracted token for validation",
+            extra={
+                "token_length": len(token),
+                "token_prefix": token[:20] + "..." if len(token) > 20 else token,
+                "path": request.url.path,
+                "method": request.method
+            }
+        )
+        
         # Validate the token
-        token_claims = await self.token_validator.validate_token(token)
+        try:
+            token_claims = await self.token_validator.validate_token(token)
+            logger.info(
+                "Token validation successful",
+                extra={
+                    "user_id": token_claims.sub,
+                    "client_id": token_claims.azp,
+                    "audience": token_claims.aud,
+                    "scopes": token_claims.scopes,
+                    "path": request.url.path
+                }
+            )
+        except Exception as e:
+            print(f"DEBUG: Token validation error: {str(e)}")
+            print(f"DEBUG: Exception type: {type(e).__name__}")
+            print(f"DEBUG: Token length: {len(token)}")
+            print(f"DEBUG: Path: {request.url.path}")
+            logger.error(
+                "Token validation failed with detailed error",
+                extra={
+                    "error": str(e),
+                    "token_length": len(token),
+                    "token_prefix": token[:20] + "..." if len(token) > 20 else token,
+                    "path": request.url.path,
+                    "method": request.method,
+                    "exception_type": type(e).__name__
+                }
+            )
+            raise
         
         # Create user context from validated claims
         user_context = UserContext.from_token_claims(token_claims)
@@ -297,7 +345,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     async def close(self) -> None:
         """Clean up resources."""
         await self.token_validator.close()
-        logger.debug("Authentication middleware closed")
+        logger.info("Authentication middleware closed")
 
 
 def get_current_user(request: Request) -> Optional[UserContext]:

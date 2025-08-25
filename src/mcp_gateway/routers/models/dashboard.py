@@ -46,6 +46,20 @@ class ServiceDeleteResponse(BaseModel):
     message: str = Field(..., description="Status message")
 
 
+class ServiceInfo(BaseModel):
+    """Service information model"""
+    service_id: str = Field(..., description="Service identifier")
+    name: str = Field(..., description="Service name")
+    description: str = Field(..., description="Service description")
+    connection_type: str = Field(..., description="Connection type (http/stdio)")
+    status: str = Field(..., description="Service status")
+
+
+class ServiceListResponse(BaseModel):
+    """Response model for listing services"""
+    services: List[ServiceInfo] = Field(..., description="List of registered services")
+
+
 class ServiceTestRequest(BaseModel):
     """Request model for testing a service connection"""
     transport: str = Field(..., pattern="^(http|stdio)$", description="Transport protocol")

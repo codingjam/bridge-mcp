@@ -7,7 +7,8 @@ services:
       realm: "BridgeMCP" 
       client_id: "fin-mcp-server"
       token_issuer: "http://localhost:8080/realms/BridgeMCP"
-      required_scopes: ["mcp:call"]
+      required_scopes: []  # Remove scope requirement for now
+      # Alternative: Use standard OAuth scopes: ["openid", "profile", "email"]
       custom_headers:
         X-Service-Name: "mcp-gateway"
         X-Version: "1.0.0"

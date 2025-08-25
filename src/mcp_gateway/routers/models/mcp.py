@@ -12,7 +12,6 @@ from pydantic import BaseModel
 class ConnectServerRequest(BaseModel):
     """Request to connect to an MCP server."""
     server_name: str
-    transport_config: Dict[str, Any]
     session_id: Optional[str] = None
 
 

@@ -21,6 +21,8 @@ from .models.dashboard import (
     ServiceCreateRequest,
     ServiceCreateResponse,
     ServiceDeleteResponse,
+    ServiceListResponse,
+    ServiceInfo,
     ServiceTestRequest,
     ServiceTestResponse,
 )
@@ -39,6 +41,44 @@ async def get_service_registry() -> ServiceRegistry:
     """
     from mcp_gateway.main import get_service_registry as get_registry
     return await get_registry()
+
+
+@dashboard_router.get("/services", response_model=ServiceListResponse)
+async def list_services(
+    registry: ServiceRegistry = Depends(get_service_registry),
+    user: Optional[UserContext] = Depends(get_current_user)
+):
+    """List all registered MCP services."""
+    try:
+        # Validate authentication if required
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required"
+            )
+        
+        # Get all services from registry
+        services = []
+        for service_id, service_config in registry.services.items():
+            service_info = ServiceInfo(
+                service_id=service_id,
+                name=service_config.name,
+                description=service_config.description,
+                connection_type=service_config.transport,  # Use 'transport' not 'connection_type'
+                status="active"  # TODO: Add real status checking
+            )
+            services.append(service_info)
+        
+        return ServiceListResponse(services=services)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list services: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list services"
+        )
 
 
 @dashboard_router.post("/services", response_model=ServiceCreateResponse)
