@@ -7,7 +7,7 @@ JWT claims and Keycloak-specific extensions.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -49,9 +49,9 @@ class TokenClaims(BaseModel):
         description="Issuer identifier - URL of the token issuing authority"
     )
     
-    aud: Optional[str] = Field(
+    aud: Optional[Union[str, List[str]]] = Field(
         None, 
-        description="Audience - intended recipient(s) of the token"
+        description="Audience - intended recipient(s) of the token (can be string or list)"
     )
     
     exp: int = Field(
@@ -72,6 +72,11 @@ class TokenClaims(BaseModel):
     jti: Optional[str] = Field(
         None, 
         description="JWT ID - unique identifier for this token"
+    )
+    
+    azp: Optional[str] = Field(
+        None,
+        description="Authorized party - the party to which the ID Token was issued"
     )
     
     # Keycloak-specific user information claims

@@ -1,7 +1,10 @@
 """
-API Models for Dashboard Endpoints
-Defines Pydantic models for request/response data validation
+Dashboard API Models
+
+Pydantic models for dashboard management endpoints.
+These models handle service configuration and management operations.
 """
+
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -43,6 +46,20 @@ class ServiceDeleteResponse(BaseModel):
     message: str = Field(..., description="Status message")
 
 
+class ServiceInfo(BaseModel):
+    """Service information model"""
+    service_id: str = Field(..., description="Service identifier")
+    name: str = Field(..., description="Service name")
+    description: str = Field(..., description="Service description")
+    connection_type: str = Field(..., description="Connection type (http/stdio)")
+    status: str = Field(..., description="Service status")
+
+
+class ServiceListResponse(BaseModel):
+    """Response model for listing services"""
+    services: List[ServiceInfo] = Field(..., description="List of registered services")
+
+
 class ServiceTestRequest(BaseModel):
     """Request model for testing a service connection"""
     transport: str = Field(..., pattern="^(http|stdio)$", description="Transport protocol")
@@ -57,3 +74,13 @@ class ServiceTestResponse(BaseModel):
     message: str = Field(..., description="Test result message")
     response_time: Optional[float] = Field(default=None, description="Response time in seconds")
     details: Optional[Dict] = Field(default=None, description="Additional test details")
+
+
+# Export all models
+__all__ = [
+    "ServiceCreateRequest",
+    "ServiceCreateResponse",
+    "ServiceDeleteResponse", 
+    "ServiceTestRequest",
+    "ServiceTestResponse",
+]

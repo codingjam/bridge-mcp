@@ -12,7 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
-from mcp_gateway.api.routes import router
+from mcp_gateway.routers.mcp_client import mcp_router
+from mcp_gateway.routers.dashboard import dashboard_router
 from mcp_gateway.core.config import settings, get_settings
 from mcp_gateway.core.logging import setup_logging
 from mcp_gateway.core.service_registry import ServiceRegistry
@@ -205,8 +206,23 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, general_exception_handler)
     
-    # Include API routes
-    app.include_router(router, prefix="/api/v1")
+    # Include API routes with new router structure
+    app.include_router(mcp_router, prefix="/api/v1")          # Native MCP client  
+    app.include_router(dashboard_router, prefix="/api/v1")    # Dashboard management
+    
+    # Health endpoint - accessible without authentication
+    @app.get("/health", tags=["health"])
+    async def health_check():
+        """
+        Health check endpoint for monitoring and load balancers.
+        Accessible without authentication.
+        """
+        return {
+            "status": "healthy",
+            "service": "MCP Gateway",
+            "version": "0.1.0",
+            "timestamp": "2025-08-24T20:30:00Z"
+        }
     
     # Root endpoint
     @app.get("/", tags=["health"])
@@ -227,12 +243,14 @@ def create_app() -> FastAPI:
                 "base_url": "/api/v1"
             },
             "endpoints": {
-                "health": "/api/v1/health",
+                "health": "/health",
                 "services": "/api/v1/services",
                 "service_detail": "/api/v1/services/{service_id}",
                 "service_health": "/api/v1/services/{service_id}/health",
-                "proxy": "/api/v1/proxy/{service_id}/{path}",
-                "mcp_call": "/api/v1/mcp/{service_id}/call"
+                "mcp_proxy": "/api/v1/mcp/proxy",
+                "mcp_connect": "/api/v1/mcp/servers/connect",
+                "mcp_tools": "/api/v1/mcp/sessions/{session_id}/tools",
+                "mcp_call": "/api/v1/mcp/sessions/{session_id}/tools/call"
             },
             "documentation": {
                 "swagger": "/docs" if settings.DEBUG else "disabled",
