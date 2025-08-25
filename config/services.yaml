@@ -22,23 +22,7 @@ services:
     name: Financial Assistant MCP
     timeout: 30
     transport: http
-    tools:
-      - get_statement
-      - list_available_statements  
-      - health_check
-    capabilities:
-      - statement_retrieval
-      - file_system_access
-      - metadata_extraction
     version: "1.0.0"
-    endpoints:
-      mcp: "/mcp"  # Main MCP protocol endpoint
-      health: "/health"  # Health check endpoint
-      root: "/"  # Service information endpoint
-      auth_discovery: "/.well-known/mcp-authorization"  # MCP auth discovery
-      oauth_discovery: "/.well-known/oauth-authorization-server"  # OAuth discovery
-    supported_transports: ["http"]
-    mcp_protocol_version: "2024-11-05"
   example-mcp-server:
     auth:
       strategy: obo_required
