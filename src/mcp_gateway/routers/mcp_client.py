@@ -7,7 +7,6 @@ using the native MCP protocol with authentication integration.
 """
 
 import asyncio
-import logging
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
 
@@ -22,6 +21,7 @@ from ..mcp.exceptions import MCPClientError, MCPConnectionError, MCPSessionError
 # Import existing auth dependencies - REUSE EXISTING PATTERNS
 from ..core.service_registry import ServiceRegistry
 from ..core.authenticated_proxy import AuthenticatedMCPProxyService
+from ..core.logging import get_logger
 from ..auth.authentication_middleware import get_current_user, get_access_token
 from ..auth.models import UserContext
 from ..auth.obo_service import OBOTokenService
@@ -42,7 +42,7 @@ from .models.mcp import (
 )
 from .models.common import ErrorResponse, SuccessResponse, HealthResponse
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Dependency injection functions - REUSE PATTERNS FROM routes.py
@@ -292,16 +292,24 @@ async def connect_server(
         # Get the proper MCPServiceAuth object from registry
         service_auth = await registry.get_service_auth(request.server_name)
         
+        logger.info(f"Attempting to connect to MCP server '{request.server_name}' with transport: {service.transport}")
+        logger.debug(f"Service endpoint: {service.endpoint}")
+        logger.debug(f"Auth strategy: {service_auth.auth_strategy.value if service_auth else 'none'}")
+        
         if service_auth and service_auth.auth_strategy.value in ["obo_required", "passthrough"]:
             if not user_token:
+                logger.error(f"No user token provided for authenticated service '{request.server_name}'")
                 raise HTTPException(
                     status_code=401,
                     detail="Authentication required for this service"
                 )
             
+            logger.debug(f"Using auth strategy: {service_auth.auth_strategy.value}")
+            
             if service_auth.auth_strategy.value == "obo_required":
                 # Use OBO token exchange (same pattern as routes.py)
                 if not proxy.obo_service:
+                    logger.error("OBO service not configured")
                     raise HTTPException(
                         status_code=500,
                         detail="OBO service not configured"
@@ -310,11 +318,13 @@ async def connect_server(
                 # Get token claims from request state (already validated by auth middleware)
                 user_claims = getattr(http_request.state, 'token_claims', None)
                 if not user_claims:
+                    logger.error("No token claims available for OBO exchange")
                     raise HTTPException(
                         status_code=401,
                         detail="No token claims available"
                     )
                 
+                logger.debug("Performing OBO token exchange")
                 # Get OBO token for the target service
                 obo_token = await proxy.obo_service.get_service_token(
                     user_token=user_token,
@@ -322,14 +332,22 @@ async def connect_server(
                     service_config=service_auth
                 )
                 
-                # Add OBO token to transport config
-                transport_config.setdefault("headers", {})
+                logger.debug("OBO token exchange successful")
+                # Add OBO token to transport config - only add Authorization, let SDK handle other headers
+                if "headers" not in transport_config:
+                    transport_config["headers"] = {}
                 transport_config["headers"]["Authorization"] = f"Bearer {obo_token}"
                 
             elif service_auth.auth_strategy.value == "passthrough":
-                # Pass through the original token
-                transport_config.setdefault("headers", {})
+                logger.debug("Using passthrough authentication")
+                # Pass through the original token - only add Authorization, let SDK handle other headers
+                if "headers" not in transport_config:
+                    transport_config["headers"] = {}
                 transport_config["headers"]["Authorization"] = f"Bearer {user_token}"
+        else:
+            logger.debug("No authentication required for this service")
+        
+        logger.info(f"Initiating MCP connection to '{request.server_name}' with session ID: {request.session_id or 'auto-generated'}")
         
         # Connect to MCP server with authenticated transport
         session_id = await client.connect_server(
@@ -429,10 +447,17 @@ async def call_tool(
             arguments=request.arguments or {}
         )
         
+        # Convert CallToolResult to dictionary for the response
+        result_dict = {
+            "meta": result.meta.model_dump() if result.meta else None,
+            "content": [content.model_dump() for content in result.content] if result.content else [],
+            "isError": result.isError
+        }
+        
         return CallToolResponse(
             session_id=session_id,
             tool_name=request.tool_name,
-            result=result,
+            result=result_dict,
             success=True
         )
         

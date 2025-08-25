@@ -18,7 +18,7 @@ services:
       clock_skew_tolerance: 300
     description: Financial Statement Analysis MCP Server with OAuth 2.0 authentication
     enabled: true
-    endpoint: http://localhost:3000
+    endpoint: http://localhost:3000/mcp/  # Added /mcp path for FastMCP Streamable HTTP
     health_check_path: /health
     name: Financial Assistant MCP
     timeout: 30

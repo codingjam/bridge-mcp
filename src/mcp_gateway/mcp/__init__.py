@@ -12,7 +12,6 @@ from .client_wrapper import MCPClientWrapper
 from .session_manager import MCPSessionManager
 from .transport_factory import MCPTransportFactory
 from .service_adapter import ServiceRegistryMCPAdapter, create_mcp_adapter
-from .fastapi_integration import mcp_router, initialize_mcp_client, shutdown_mcp_client, mcp_lifespan
 from .exceptions import (
     MCPClientError, MCPConnectionError, MCPTransportError,
     MCPAuthenticationError, MCPSessionError, MCPProtocolError
@@ -24,10 +23,6 @@ __all__ = [
     "MCPTransportFactory",
     "ServiceRegistryMCPAdapter",
     "create_mcp_adapter",
-    "mcp_router",
-    "initialize_mcp_client",
-    "shutdown_mcp_client",
-    "mcp_lifespan",
     "MCPClientError",
     "MCPConnectionError", 
     "MCPTransportError",

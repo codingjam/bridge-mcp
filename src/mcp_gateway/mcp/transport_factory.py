@@ -9,7 +9,7 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Tuple, Optional, Dict, Any, Union
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -18,13 +18,18 @@ from mcp.client.auth import OAuthClientProvider
 from mcp.shared.auth import OAuthClientMetadata
 from pydantic import AnyUrl
 
+from ..core.logging import get_logger
 from .exceptions import MCPTransportError, MCPConnectionError, MCPAuthenticationError
+
+
+logger = get_logger(__name__)
 
 
 class MCPTransportFactory:
     """Factory for creating MCP transport connections."""
     
     @staticmethod
+    @asynccontextmanager
     async def create_stdio_transport(
         command: str,
         args: Optional[list[str]] = None,
@@ -74,6 +79,7 @@ class MCPTransportFactory:
             ) from e
 
     @staticmethod
+    @asynccontextmanager
     async def create_http_transport(
         url: str,
         auth_provider: Optional[OAuthClientProvider] = None,
@@ -96,36 +102,79 @@ class MCPTransportFactory:
             MCPTransportError: If HTTP connection fails
         """
         try:
+            logger.debug(f"Creating HTTP transport for URL: {url}")
+            
             # Validate URL
             parsed = urlparse(url)
             if not parsed.scheme or not parsed.netloc:
+                logger.error(f"Invalid URL format: {url}")
                 raise MCPTransportError(
                     f"Invalid URL format: {url}",
                     transport_type="streamable_http"
                 )
             
-            async with streamablehttp_client(
-                url=url,
-                auth=auth_provider,
-                headers=headers,
-                timeout=timeout
-            ) as (read_stream, write_stream, session_info):
-                yield read_stream, write_stream, session_info
+            # Ensure trailing slash so relative joins stay under /mcp/
+            path = parsed.path or "/"
+            if not path.endswith("/"):
+                parsed = parsed._replace(path=path + "/")
+                url = urlunparse(parsed)
+                logger.debug(f"Normalized URL with trailing slash: {url}")
+            
+            logger.debug(f"URL validation passed. Parsed: scheme={parsed.scheme}, netloc={parsed.netloc}")
+            logger.debug(f"Headers: {headers}")
+            logger.debug(f"Timeout: {timeout}")
+            
+            logger.debug(f"Attempting to create streamable HTTP client for {url}")
+            
+            # Use provided timeout or None to let SDK use its defaults
+            # Don't force a short timeout that might be too aggressive for slow networks
+            effective_timeout = timeout  # Could be None, which is fine
+            logger.debug(f"Using effective timeout: {effective_timeout}")
+            
+            try:
+                async with streamablehttp_client(
+                    url=url,
+                    auth=auth_provider,
+                    headers=headers,
+                    timeout=effective_timeout
+                ) as (read_stream, write_stream, session_info):
+                    logger.debug(f"Streamable HTTP client created successfully for {url}")
+                    logger.debug(f"Read stream state: open={not read_stream._closed if hasattr(read_stream, '_closed') else 'unknown'}")
+                    logger.debug(f"Write stream state: open={not write_stream._closed if hasattr(write_stream, '_closed') else 'unknown'}")
+                    yield read_stream, write_stream, session_info
+            except* Exception as eg:
+                # Handle ExceptionGroup/TaskGroup errors specifically - log each sub-exception
+                logger.error(f"ExceptionGroup caught for {url}: {eg}")
+                for i, exc in enumerate(eg.exceptions):
+                    logger.exception(f"HTTP transport sub-exception %d for {url}", i, exc_info=exc)
+                raise MCPTransportError(
+                    f"Failed to create HTTP transport due to TaskGroup error: {eg}",
+                    transport_type="streamable_http",
+                    details={"url": url, "exception_group": str(eg)}
+                )
                 
         except Exception as e:
+            # Log the underlying error for debugging TaskGroup issues
+            logger.exception("HTTP transport failed for URL %s: %s", url, str(e))
+            
+            # Check if it's already our custom error type
             if isinstance(e, MCPTransportError):
                 raise
+                
+            # Wrap in our custom error with details
             raise MCPTransportError(
                 f"Failed to create HTTP transport: {str(e)}",
                 transport_type="streamable_http",
                 details={
                     "url": url,
                     "headers": headers,
-                    "timeout": timeout
+                    "timeout": timeout,
+                    "error_type": type(e).__name__
                 }
             ) from e
 
     @classmethod
+    @asynccontextmanager
     async def create_authenticated_http_transport(
         cls,
         url: str,

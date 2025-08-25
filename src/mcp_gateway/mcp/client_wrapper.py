@@ -7,7 +7,6 @@ MCP Gateway architecture.
 """
 
 import asyncio
-import logging
 from typing import Optional, Dict, Any, List, Union
 from contextlib import asynccontextmanager
 
@@ -21,9 +20,10 @@ from pydantic import AnyUrl
 
 from .session_manager import MCPSessionManager, MCPSessionConfig, default_sampling_callback
 from .exceptions import MCPClientError, MCPSessionError, MCPConnectionError
+from ..core.logging import get_logger
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MCPClientWrapper:

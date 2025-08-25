@@ -6,7 +6,6 @@ and error recovery.
 """
 
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 from typing import Dict, Optional, Any, AsyncGenerator, Set
 from dataclasses import dataclass, field
@@ -17,9 +16,10 @@ from mcp.types import CreateMessageRequestParams, CreateMessageResult
 
 from .transport_factory import MCPTransportFactory
 from .exceptions import MCPSessionError, MCPConnectionError
+from ..core.logging import get_logger
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -54,6 +54,7 @@ class MCPSessionManager:
         self._sessions: Dict[str, ClientSession] = {}
         self._session_info: Dict[str, MCPSessionInfo] = {}
         self._session_configs: Dict[str, MCPSessionConfig] = {}
+        self._transports: Dict[str, Any] = {}  # Store transport context managers
         self._max_sessions = max_sessions
         self._cleanup_task: Optional[asyncio.Task] = None
         self._heartbeat_tasks: Dict[str, asyncio.Task] = {}
@@ -124,6 +125,9 @@ class MCPSessionManager:
                 )
         
         try:
+            logger.info(f"Creating MCP session {config.session_id} for server {config.server_name}")
+            logger.debug(f"Transport config: {config.transport_config}")
+            
             # Create session info
             session_info = MCPSessionInfo(
                 session_id=config.session_id,
@@ -135,21 +139,63 @@ class MCPSessionManager:
             self._session_configs[config.session_id] = config
             self._session_info[config.session_id] = session_info
             
-            # Create transport and session
-            async with MCPTransportFactory.create_transport(config.transport_config) as (reader, writer, _):
+            logger.debug(f"Creating transport for session {config.session_id}")
+            
+            # Create transport context manager but don't enter it yet
+            transport_cm = MCPTransportFactory.create_transport(config.transport_config)
+            
+            try:
+                # Manually enter the transport context to keep it alive
+                reader, writer, _ = await transport_cm.__aenter__()
+                logger.debug(f"Transport created successfully for session {config.session_id}")
+                
                 session = ClientSession(
                     read_stream=reader,
                     write_stream=writer,
                     sampling_callback=sampling_callback
                 )
                 
-                # Initialize the session
-                await session.initialize()
+                logger.debug(f"Entering ClientSession context for session {config.session_id}")
+                # Enter the ClientSession context first
+                await session.__aenter__()
+                
+                logger.debug(f"Initializing MCP session {config.session_id}")
+                # Initialize the session with timeout
+                try:
+                    await asyncio.wait_for(session.initialize(), timeout=30.0)
+                    logger.info(f"MCP session {config.session_id} initialized successfully")
+                except asyncio.TimeoutError:
+                    logger.error(f"MCP session {config.session_id} initialization timed out after 30 seconds")
+                    # Cleanup both session and transport on failure
+                    try:
+                        await session.__aexit__(None, None, None)
+                    finally:
+                        await transport_cm.__aexit__(None, None, None)
+                    raise MCPSessionError(
+                        f"Session initialization timed out for {config.session_id}",
+                        session_id=config.session_id,
+                        operation="initialize_session"
+                    )
+                except Exception as init_error:
+                    logger.error(f"MCP session {config.session_id} initialization failed: {init_error}")
+                    # Cleanup both session and transport on failure
+                    try:
+                        await session.__aexit__(None, None, None)
+                    finally:
+                        await transport_cm.__aexit__(None, None, None)
+                    raise MCPSessionError(
+                        f"Session initialization failed for {config.session_id}: {str(init_error)}",
+                        session_id=config.session_id,
+                        operation="initialize_session"
+                    ) from init_error
                 
                 async with self._lock:
                     self._sessions[config.session_id] = session
                     session_info.status = "active"
                     session_info.connection_count += 1
+                    session_info.last_activity = datetime.utcnow()  # Update activity on successful creation
+                    # Store the transport context manager so we can close it later
+                    self._transports[config.session_id] = transport_cm
                     
                 # Start heartbeat task
                 if config.heartbeat_interval > 0:
@@ -159,6 +205,14 @@ class MCPSessionManager:
                 
                 logger.info(f"Created MCP session {config.session_id} for server {config.server_name}")
                 return config.session_id
+                
+            except Exception as e:
+                # Ensure transport is cleaned up on any failure
+                try:
+                    await transport_cm.__aexit__(None, None, None)
+                except:
+                    pass
+                raise
                 
         except Exception as e:
             # Cleanup on failure
@@ -203,10 +257,26 @@ class MCPSessionManager:
                 self._heartbeat_tasks[session_id].cancel()
                 del self._heartbeat_tasks[session_id]
             
-            # Close session
+            # Close session using context manager exit
             session = self._sessions[session_id]
-            if hasattr(session, 'close'):
-                await session.close()
+            try:
+                await session.__aexit__(None, None, None)
+            except Exception as e:
+                logger.warning(f"Error exiting session context for {session_id}: {e}")
+                # Fallback to close() if context exit fails
+                if hasattr(session, 'close'):
+                    try:
+                        await session.close()
+                    except Exception:
+                        pass
+            
+            # Close transport context manager
+            transport_cm = self._transports.pop(session_id, None)
+            if transport_cm:
+                try:
+                    await transport_cm.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.warning(f"Error closing transport for session {session_id}: {e}")
             
             # Remove from tracking
             del self._sessions[session_id]
@@ -228,6 +298,13 @@ class MCPSessionManager:
         async with self._lock:
             self._session_configs.pop(session_id, None)
             self._session_info.pop(session_id, None)
+            # Also clean up any transport that might have been stored
+            transport_cm = self._transports.pop(session_id, None)
+            if transport_cm:
+                try:
+                    await transport_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
             if session_id in self._heartbeat_tasks:
                 self._heartbeat_tasks[session_id].cancel()
                 del self._heartbeat_tasks[session_id]
