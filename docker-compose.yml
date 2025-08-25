@@ -40,12 +40,12 @@ services:
       - KEYCLOAK_CLIENT_ID=mcp-gateway
       - KEYCLOAK_CLIENT_SECRET=7Hh8stp6hZsA61B6Jdd7HM1KzxMKw4qn
       - TOKEN_AUDIENCE=mcp-gateway
-      - TOKEN_ISSUER=http://keycloak:8080/realms/BridgeMCP
+      - TOKEN_ISSUER=http://localhost:8080/realms/BridgeMCP
       - JWKS_CACHE_TTL=3600
       - ENABLE_OBO=true
       - OBO_CACHE_TTL=1800
       - CLOCK_SKEW_TOLERANCE=300
-      - REQUIRED_SCOPES=["mcp:read","mcp:call"]
+      - REQUIRED_SCOPES=[]
       - ENABLE_RATE_LIMITING=true
       - CORS_ORIGINS=["http://localhost:3000","http://localhost:8000","http://localhost:8080"]
       - ALLOWED_HOSTS=["localhost","127.0.0.1","mcp-gateway"]
@@ -57,7 +57,7 @@ services:
     networks:
       - mcp-shared
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3

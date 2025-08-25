@@ -72,7 +72,7 @@ class TokenValidator:
         self._introspection_cache_times: Dict[str, datetime] = {}
         
         logger.info(
-            "Token validator initialized",
+            "TokenValidator initialized",
             extra={
                 "realm": self.config.realm,
                 "jwks_uri": self.config.jwks_uri
@@ -125,7 +125,7 @@ class TokenValidator:
                         f"Token missing required scopes: {self.config.required_scopes}"
                     )
             
-            logger.debug(
+            logger.info(
                 "Token validation successful",
                 extra={
                     "sub": token_claims.sub,
@@ -165,7 +165,7 @@ class TokenValidator:
             
             # Fetch fresh JWKS from Keycloak
             try:
-                logger.debug(f"Fetching JWKS from {self.config.jwks_uri}")
+                logger.info(f"Fetching JWKS from {self.config.jwks_uri}")
                 
                 response = await self.http_client.get(self.config.jwks_uri)
                 response.raise_for_status()
@@ -190,13 +190,28 @@ class TokenValidator:
                 return jwks
                 
             except httpx.HTTPError as e:
-                logger.error(f"Failed to fetch JWKS: {e}")
+                logger.error(
+                    f"Failed to fetch JWKS from URL: {self.config.jwks_uri} - Error: {e}",
+                    extra={
+                        "jwks_uri": self.config.jwks_uri,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e)
+                    }
+                )
                 raise KeycloakConnectionError(
                     f"Unable to fetch JWKS from Keycloak: {str(e)}",
                     str(e)
                 )
             except Exception as e:
-                logger.error(f"Unexpected error fetching JWKS: {e}", exc_info=True)
+                logger.error(
+                    f"Unexpected error fetching JWKS from URL: {self.config.jwks_uri} - Error: {e}",
+                    extra={
+                        "jwks_uri": self.config.jwks_uri,
+                        "error_type": type(e).__name__,
+                        "error_details": str(e)
+                    },
+                    exc_info=True
+                )
                 raise KeycloakConnectionError(
                     f"Unexpected error fetching JWKS: {str(e)}",
                     str(e)
@@ -305,7 +320,7 @@ class TokenValidator:
             if not result.get('active', False):
                 raise TokenValidationError("Token is not active (revoked)")
             
-            logger.debug("Token introspection successful", extra={"active": True})
+            logger.info("Token introspection successful", extra={"active": True})
             
         except httpx.HTTPError as e:
             logger.error(f"Token introspection failed: {e}")
@@ -327,12 +342,12 @@ class TokenValidator:
             self._introspection_cache_times.pop(key, None)
         
         if expired_keys:
-            logger.debug(f"Cleaned up {len(expired_keys)} expired introspection cache entries")
+            logger.info(f"Cleaned up {len(expired_keys)} expired introspection cache entries")
     
     async def close(self) -> None:
         """Clean up resources."""
         await self.http_client.aclose()
-        logger.debug("Token validator closed")
+        logger.info("Token validator closed")
     
     async def __aenter__(self):
         """Async context manager entry."""

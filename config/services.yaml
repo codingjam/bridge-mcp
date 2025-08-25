@@ -1,24 +1,29 @@
-global:
-  default_timeout: 30
-  enable_health_checks: true
-  enable_service_discovery: false
-  health_check_interval: 60
 services:
   fin-assistant-mcp:
     auth:
       strategy: obo_required
-      target_audience: "fin-assistant"
-      required_scopes: ["mcp:call", "mcp:read"]
+      target_audience: "account"  # Updated to match TOKEN_AUDIENCE from docker-compose
+      keycloak_server_url: "http://localhost:8080"
+      realm: "BridgeMCP" 
+      client_id: "fin-mcp-server"
+      token_issuer: "http://localhost:8080/realms/BridgeMCP"
+      required_scopes: []  # Remove scope requirement for now
+      # Alternative: Use standard OAuth scopes: ["openid", "profile", "email"]
       custom_headers:
         X-Service-Name: "mcp-gateway"
         X-Version: "1.0.0"
-    description: Financial Statement Analysis MCP Server
+        Accept: "application/json"
+        Content-Type: "application/json"
+      jwks_cache_ttl: 3600
+      clock_skew_tolerance: 300
+    description: Financial Statement Analysis MCP Server with OAuth 2.0 authentication
     enabled: true
-    endpoint: http://fin_statement_mcp:3000
+    endpoint: http://localhost:3000/mcp/  # Added /mcp path for FastMCP Streamable HTTP
     health_check_path: /health
     name: Financial Assistant MCP
     timeout: 30
     transport: http
+    version: "1.0.0"
   example-mcp-server:
     auth:
       strategy: obo_required

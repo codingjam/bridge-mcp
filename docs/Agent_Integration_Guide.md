@@ -6,9 +6,9 @@
 
 The MCP Gateway provides a centralized HTTP API that allows AI agents and MCP clients to discover and interact with multiple MCP servers through a single endpoint. This guide explains how to integrate your agent host with the gateway.
 
-**📋 Protocol Version**: This guide reflects MCP protocol specification 2025-03-26, using Streamable HTTP transport with single `/mcp/{service_id}` endpoints instead of deprecated Server-Sent Events (SSE) transport.
+**📋 Protocol Version**: This guide reflects MCP protocol specification 2025-03-26, using native MCP client with simplified `/mcp/proxy` endpoint for all server interactions.
 
-**🚀 Current Status**: The gateway is currently in Phase 2 development, implementing full MCP compliance with the Python MCP SDK. Basic HTTP routing and authentication are operational.
+**🚀 Current Status**: The gateway has completed migration to native MCP client implementation with full authentication integration. All legacy HTTP proxy functionality has been removed in favor of native MCP protocol compliance.
 
 ## Quick Start
 
@@ -17,13 +17,22 @@ The MCP Gateway provides a centralized HTTP API that allows AI agents and MCP cl
 Your agent needs to know these key endpoints:
 
 ```
-Base URL: http://localhost:8000/api/v1
+Base URL: http://localhost:8000
 
 - GET  /services                           # Discover available MCP servers
 - GET  /services/{service_id}              # Get details about a specific server
 - GET  /services/{service_id}/health       # Check if a server is healthy
-- POST /mcp/{service_id}                   # MCP protocol calls (Streamable HTTP)
-- GET  /mcp/{service_id}                   # Optional server-push (if supported)
+- POST /mcp/proxy                          # Simplified MCP JSON-RPC proxy endpoint
+- POST /mcp/servers/connect                # Connect to MCP servers (session-based)
+- GET  /mcp/sessions/{session_id}/tools    # List tools (session-based)
+- POST /mcp/sessions/{session_id}/tools/call # Call tools (session-based)
+- GET  /mcp/health                         # MCP client health check
+- GET  /dashboard/health                   # Dashboard health check
+
+**Advanced Session-Based Endpoints** (optional):
+- POST /mcp/servers/connect              # Create persistent session  
+- GET  /mcp/sessions/{id}/tools         # List tools in session
+- POST /mcp/sessions/{id}/tools/call    # Call tool in session
 ```
 
 ### 2. Basic Integration Flow
@@ -37,15 +46,15 @@ sequenceDiagram
     Agent->>Gateway: GET /services
     Gateway->>Agent: List of available servers
     
-    Agent->>Gateway: POST /mcp/{service_id}<br/>{"method": "tools/list"}
-    Gateway->>Server: Forward via Streamable HTTP
+    Agent->>Gateway: POST /mcp/proxy<br/>{"method": "tools/list", "server_name": "filesystem"}
+    Gateway->>Server: Forward via native MCP SDK
     Server->>Gateway: Available tools
-    Gateway->>Agent: Tools list (JSON)
+    Gateway->>Agent: Tools list (JSON-RPC response)
     
-    Agent->>Gateway: POST /mcp/{service_id}<br/>{"method": "tools/call", "params": {...}}
-    Gateway->>Server: Execute tool via MCP SDK
+    Agent->>Gateway: POST /mcp/proxy<br/>{"method": "tools/call", "params": {"name": "read_file", "arguments": {...}}, "server_name": "filesystem"}
+    Gateway->>Server: Execute tool via native MCP client
     Server->>Gateway: Tool result
-    Gateway->>Agent: Result (JSON or SSE)
+    Gateway->>Agent: Result (JSON-RPC response)
 ```
 
 ## Step-by-Step Integration
@@ -55,7 +64,7 @@ sequenceDiagram
 Start by discovering what MCP servers are available through the gateway:
 
 ```http
-GET http://localhost:8000/api/v1/services
+GET http://localhost:8000/services
 Accept: application/json
 ```
 
@@ -120,7 +129,7 @@ Accept: application/json
 Before using a service, verify it's healthy:
 
 ```http
-GET http://localhost:8000/api/v1/services/filesystem/health
+GET http://localhost:8000/services/filesystem/health
 ```
 
 **Response:**
@@ -139,12 +148,12 @@ GET http://localhost:8000/api/v1/services/filesystem/health
 For each service you want to use, discover what tools it provides:
 
 ```http
-POST http://localhost:8000/api/v1/mcp/filesystem
+POST http://localhost:8000/mcp/proxy
 Content-Type: application/json
 
 {
   "method": "tools/list",
-  "params": {}
+  "server_name": "filesystem"
 }
 ```
 
@@ -209,11 +218,12 @@ Content-Type: application/json
 Now you can call any tool on any service:
 
 ```http
-POST http://localhost:8000/api/v1/mcp/filesystem
+POST http://localhost:8000/mcp/proxy
 Content-Type: application/json
 
 {
   "method": "tools/call",
+  "server_name": "filesystem",
   "params": {
     "name": "read_file",
     "arguments": {
@@ -260,38 +270,45 @@ import httpx
 from typing import Dict, List, Any
 
 class MCPGatewayClient:
-    def __init__(self, gateway_url: str = "http://localhost:8000"):
+    def __init__(self, gateway_url: str = "http://localhost:8000", auth_token: str = None):
         self.gateway_url = gateway_url
-        self.base_url = f"{gateway_url}/api/v1"
+        self.base_url = f"{gateway_url}"
         self.client = httpx.AsyncClient()
+        self.auth_token = auth_token
+        self.headers = {}
+        if auth_token:
+            self.headers["Authorization"] = f"Bearer {auth_token}"
     
     async def discover_services(self) -> Dict[str, Any]:
         """Discover all available MCP services"""
-        response = await self.client.get(f"{self.base_url}/services")
+        response = await self.client.get(f"{self.base_url}/services", headers=self.headers)
         response.raise_for_status()
         return response.json()
     
-    async def get_service_tools(self, service_id: str) -> List[Dict[str, Any]]:
+    async def get_service_tools(self, server_name: str) -> List[Dict[str, Any]]:
         """Get available tools for a specific service"""
         response = await self.client.post(
-            f"{self.base_url}/mcp/{service_id}",
-            json={"method": "tools/list", "params": {}}
+            f"{self.base_url}/mcp/proxy",
+            json={"method": "tools/list", "server_name": server_name},
+            headers=self.headers
         )
         response.raise_for_status()
         data = response.json()
         return data["result"]["tools"]
     
-    async def call_tool(self, service_id: str, tool_name: str, **arguments) -> Any:
+    async def call_tool(self, server_name: str, tool_name: str, **arguments) -> Any:
         """Execute a tool on a specific service"""
         response = await self.client.post(
-            f"{self.base_url}/mcp/{service_id}",
+            f"{self.base_url}/mcp/proxy",
             json={
                 "method": "tools/call",
+                "server_name": server_name,
                 "params": {
                     "name": tool_name,
                     "arguments": arguments
                 }
-            }
+            },
+            headers=self.headers
         )
         response.raise_for_status()
         data = response.json()
@@ -300,7 +317,7 @@ class MCPGatewayClient:
     async def check_service_health(self, service_id: str) -> bool:
         """Check if a service is healthy"""
         try:
-            response = await self.client.get(f"{self.base_url}/services/{service_id}/health")
+            response = await self.client.get(f"{self.base_url}/services/{service_id}/health", headers=self.headers)
             response.raise_for_status()
             data = response.json()
             return data["healthy"]
@@ -313,7 +330,7 @@ class MCPGatewayClient:
 
 # Example usage in your agent
 async def agent_example():
-    gateway = MCPGatewayClient()
+    gateway = MCPGatewayClient(auth_token="your-jwt-token")
     
     try:
         # Discover available services
@@ -375,25 +392,37 @@ interface MCPTool {
 
 class MCPGatewayClient {
   private baseUrl: string;
+  private authToken?: string;
 
-  constructor(gatewayUrl: string = 'http://localhost:8000') {
-    this.baseUrl = `${gatewayUrl}/api/v1`;
+  constructor(gatewayUrl: string = 'http://localhost:8000', authToken?: string) {
+    this.baseUrl = gatewayUrl;
+    this.authToken = authToken;
+  }
+
+  private getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.authToken) {
+      headers['Authorization'] = `Bearer ${this.authToken}`;
+    }
+    return headers;
   }
 
   async discoverServices(): Promise<Record<string, MCPService>> {
-    const response = await fetch(`${this.baseUrl}/services`);
+    const response = await fetch(`${this.baseUrl}/services`, {
+      headers: this.getHeaders()
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     return data.services;
   }
 
-  async getServiceTools(serviceId: string): Promise<MCPTool[]> {
-    const response = await fetch(`${this.baseUrl}/mcp/${serviceId}`, {
+  async getServiceTools(serverName: string): Promise<MCPTool[]> {
+    const response = await fetch(`${this.baseUrl}/mcp/proxy`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders(),
       body: JSON.stringify({
         method: 'tools/list',
-        params: {}
+        server_name: serverName
       })
     });
     
@@ -402,12 +431,13 @@ class MCPGatewayClient {
     return data.result.tools;
   }
 
-  async callTool(serviceId: string, toolName: string, arguments: Record<string, any>): Promise<any> {
-    const response = await fetch(`${this.baseUrl}/mcp/${serviceId}`, {
+  async callTool(serverName: string, toolName: string, arguments: Record<string, any>): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/mcp/proxy`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders(),
       body: JSON.stringify({
         method: 'tools/call',
+        server_name: serverName,
         params: {
           name: toolName,
           arguments
@@ -422,7 +452,9 @@ class MCPGatewayClient {
 
   async checkServiceHealth(serviceId: string): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/services/${serviceId}/health`);
+      const response = await fetch(`${this.baseUrl}/services/${serviceId}/health`, {
+        headers: this.getHeaders()
+      });
       if (!response.ok) return false;
       const data = await response.json();
       return data.healthy;
@@ -434,7 +466,7 @@ class MCPGatewayClient {
 
 // Example usage
 async function agentExample() {
-  const gateway = new MCPGatewayClient();
+  const gateway = new MCPGatewayClient('http://localhost:8000', 'your-jwt-token');
   
   // Discover services
   const services = await gateway.discoverServices();
@@ -657,13 +689,13 @@ The gateway supports different authentication strategies per service:
 - ✅ Service registry and configuration
 - ✅ Basic HTTP API endpoints
 
-**Phase 2 In Progress**: 
-- 🔄 MCP protocol compliance (Streamable HTTP)
-- 🔄 Python MCP SDK integration
-- 🔄 Session management and connection pooling
-- 🔄 Circuit breaker patterns
+**Phase 2 Completed**: 
+- ✅ MCP protocol compliance (Native MCP client)
+- ✅ Python MCP SDK integration
+- ✅ Session management and connection pooling
+- ✅ Circuit breaker patterns
 
-**Note**: While basic HTTP endpoints are operational, full MCP protocol support is being finalized in the `mcp-spec-compliance` branch.
+**Current Status**: Full MCP protocol support implemented with native client architecture.
 
 ### Common Issues
 
