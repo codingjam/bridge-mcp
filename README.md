@@ -21,15 +21,13 @@ The MCP Gateway acts as a centralized MCP-native proxy and security layer for MC
 - ✅ **Complete OIDC Authentication System** with Keycloak integration and JWT validation
 - ✅ **OAuth2 On-Behalf-Of (OBO) Flow** with automatic token exchange and caching
 - ✅ **Enhanced Error Handling** - TaskGroup exception capture with detailed sub-exception logging
-- ✅ **Connection Pooling** - Efficient resource management with proper cleanup
-- ✅ **Comprehensive audit system** with structured logging and event tracking
-- ✅ **Rate limiting system** (Redis-based distributed rate limiting)
 - ✅ **Health check endpoints** with real-time service monitoring
 - ✅ **Circuit Breaker Protection** - Per-server failure isolation with state machine (CLOSED/OPEN/HALF_OPEN)
 
 ### In Progress (Phase 3 - Advanced Features) 🚧
+- 🟡 **Rate limiting system** (Redis-based distributed rate limiting)
+- 🟡 **Comprehensive audit system** with structured logging and event tracking
 - 🟡 **Advanced Monitoring Dashboard** - React/TypeScript UI for service management
-- 🟡 **Multi-transport Bridge** - HTTP ↔ stdio protocol interoperability
 
 
 ### MCP Compliance Implementation
