@@ -2,7 +2,7 @@
 
 from .models.audit_event import AuditEvent
 from .store import AuditStore, get_audit_store
-from .logger import (
+from .audit_logger import (
     log_audit_event,
     log_tool_invocation,
     log_auth_event,

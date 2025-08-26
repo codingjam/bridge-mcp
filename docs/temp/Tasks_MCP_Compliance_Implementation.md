@@ -58,7 +58,7 @@
 |------|--------|----------|----------|-------|
 | Test Phase 0 implementation with real MCP server | 🟡 **IN PROGRESS** | - | Aug 23 | Need test MCP server setup |
 | Validate ServiceRegistry integration works | 🟢 **COMPLETED** | - | Aug 22 | ✅ Tests passing |
-| Test OBO token flow with MCP Client SDK | 🔵 **READY** | - | Aug 23 | Depends on test server |
+| Test OBO token flow with MCP Client SDK | 🟢 **COMPLETED**  | - | Aug 23 | Depends on test server |
 | Verify transport creation (stdio/HTTP) | 🟢 **COMPLETED** | - | Aug 22 | ✅ Factory implemented |
 | Test session lifecycle and cleanup | 🟢 **COMPLETED** | - | Aug 22 | ✅ Session manager working |
 | Contract test: `notifications/initialized` returns 202 | � **COMPLETED** | - | Aug 22 | ✅ **CRITICAL** for MCP compliance - PASSED |

@@ -158,7 +158,7 @@ The audit module provides convenient high-level functions for common logging sce
 The primary logging function that creates events, stores them, and outputs JSON to stdout for container logging:
 
 ```python
-from mcp_gateway.audit.logger import log_audit_event
+from mcp_gateway.audit.audit_logger import log_audit_event
 
 # Basic tool invocation logging
 event = log_audit_event(
@@ -199,13 +199,11 @@ event = log_audit_event(
 Specialized functions for common event types:
 
 ```python
-from mcp_gateway.audit.logger import (
-    log_tool_invocation, 
-    log_auth_event, 
+from mcp_gateway.audit.audit_logger import (
+    log_tool_invocation,
+    log_auth_event,
     log_policy_event
-)
-
-# Tool invocation with full context
+)# Tool invocation with full context
 event = log_tool_invocation(
     actor_user_id="user-456",
     actor_client_id="vscode-copilot",
@@ -243,7 +241,7 @@ event = log_policy_event(
 Get comprehensive system statistics:
 
 ```python
-from mcp_gateway.audit.logger import get_audit_summary
+from mcp_gateway.audit.audit_logger import get_audit_summary
 
 summary = get_audit_summary()
 print(f"Total events: {summary['total_events']}")

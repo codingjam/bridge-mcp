@@ -17,7 +17,7 @@ import pytest
 
 from mcp_gateway.audit.models.audit_event import AuditEvent
 from mcp_gateway.audit.store import get_audit_store
-from mcp_gateway.audit.logger import (
+from mcp_gateway.audit.audit_logger import (
     log_audit_event,
     log_tool_invocation,
     log_auth_event,
