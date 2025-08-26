@@ -12,6 +12,9 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 # Import authentication models
 from ..auth.models import MCPServiceAuth, AuthStrategy
 
+# Import circuit breaker components
+from ..circuit_breaker.manager import CircuitBreakerManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,6 +97,9 @@ class ServiceRegistry:
         self.global_config = GlobalConfig()
         self._health_status: Dict[str, bool] = {}
         self._service_auth_configs: Dict[str, MCPServiceAuth] = {}
+        
+        # Initialize circuit breaker manager
+        self.circuit_breaker_manager = CircuitBreakerManager()
         
     async def load_services(self) -> None:
         """

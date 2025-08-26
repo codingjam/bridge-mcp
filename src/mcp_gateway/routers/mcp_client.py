@@ -93,7 +93,11 @@ async def get_mcp_client() -> MCPClientWrapper:
     """Get or create MCP client instance."""
     global _mcp_client
     if _mcp_client is None:
-        _mcp_client = MCPClientWrapper()
+        # Get service registry for circuit breaker manager
+        service_registry = await get_service_registry()
+        _mcp_client = MCPClientWrapper(
+            circuit_breaker_manager=service_registry.circuit_breaker_manager
+        )
         # Initialize the client (start session manager)
         await _mcp_client.__aenter__()
     return _mcp_client
