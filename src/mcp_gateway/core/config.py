@@ -28,6 +28,32 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: list[str] = Field(default_factory=lambda: ["*"], description="Allowed hosts for TrustedHostMiddleware")
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["*"], description="CORS allowed origins")
     
+    @field_validator('CORS_ORIGINS', mode='before')
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Parse CORS_ORIGINS from environment variable"""
+        if isinstance(v, str):
+            # Remove whitespace and parse JSON-like string
+            import json
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                # If JSON parsing fails, split by comma and clean up
+                return [origin.strip().strip('"').strip("'") for origin in v.split(',') if origin.strip()]
+        return v if isinstance(v, list) else [v] if v else ["*"]
+    
+    @field_validator('ALLOWED_HOSTS', mode='before')
+    @classmethod
+    def parse_allowed_hosts(cls, v):
+        """Parse ALLOWED_HOSTS from environment variable"""
+        if isinstance(v, str):
+            import json
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return [host.strip().strip('"').strip("'") for host in v.split(',') if host.strip()]
+        return v if isinstance(v, list) else [v] if v else ["*"]
+    
     # Authentication
     API_KEY_HEADER: str = Field(default="X-API-Key", description="API key header name")
     

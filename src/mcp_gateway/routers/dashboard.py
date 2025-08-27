@@ -7,8 +7,11 @@ Provides endpoints for configuring and managing MCP services through the web UI.
 
 import asyncio
 import logging
+import subprocess
+import time
 from typing import Dict, List, Optional
 
+import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
@@ -54,12 +57,12 @@ async def get_service_registry(request: Request) -> ServiceRegistry:
     return registry
 
 
-@dashboard_router.get("/services", response_model=ServiceListResponse)
-async def list_services(
+@dashboard_router.get("/overview", response_model=Dict)
+async def get_dashboard_overview(
     registry: ServiceRegistry = Depends(get_service_registry),
     user: Optional[UserContext] = Depends(get_current_user)
 ):
-    """List all registered MCP services."""
+    """Get dashboard overview metrics."""
     try:
         # Validate authentication if required
         if settings.ENABLE_AUTH and user is None:
@@ -68,6 +71,119 @@ async def list_services(
                 detail="Authentication required"
             )
         
+        # Get basic metrics
+        total_services = len(registry.services)
+        active_services = sum(1 for service in registry.services.values() if service.enabled)
+        healthy_services = active_services  # TODO: Add real health checking
+        unhealthy_services = total_services - healthy_services
+        
+        return {
+            "services": {
+                "total": total_services,
+                "healthy": healthy_services,
+                "unhealthy": unhealthy_services,
+                "disabled": total_services - active_services
+            },
+            "performance": {
+                "averageResponseTime": 0,  # TODO: Add real response time tracking
+                "successRate": 100 if total_services == 0 else (healthy_services / total_services) * 100,
+                "cpuUsage": 0,  # TODO: Add real CPU monitoring
+                "memoryUsage": 0  # TODO: Add real memory monitoring
+            },
+            "rateLimiting": {
+                "totalRequests": 0,  # TODO: Add real request counting
+                "currentRps": 0,  # TODO: Add real RPS calculation
+                "blockedRequests": 0,  # TODO: Add real blocking metrics
+                "throttledRequests": 0  # TODO: Add real throttling metrics
+            },
+            "systemStatus": {
+                "status": "operational" if healthy_services == total_services else "degraded",
+                "message": "All systems operational" if healthy_services == total_services else f"{unhealthy_services} service(s) unhealthy",
+                "severity": "info" if healthy_services == total_services else "warning",
+                "lastChecked": "2024-01-01T00:00:00Z",  # TODO: Add real timestamps
+                "uptime": "00:00:00"  # TODO: Add real uptime tracking
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get dashboard overview: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get dashboard overview"
+        )
+
+
+@dashboard_router.get("/services/health", response_model=Dict)
+async def get_services_health(
+    registry: ServiceRegistry = Depends(get_service_registry),
+    user: Optional[UserContext] = Depends(get_current_user)
+):
+    """Get health status for all services."""
+    try:
+        # Validate authentication if required
+        if settings.ENABLE_AUTH and user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required"
+            )
+        
+        # Get health status for all services
+        services = []
+        healthy_count = 0
+        unhealthy_count = 0
+        disabled_count = 0
+        
+        for service_id, service_config in registry.services.items():
+            is_healthy = service_config.enabled  # TODO: Add real health checking
+            status = "healthy" if is_healthy else "unhealthy" if service_config.enabled else "disabled"
+            
+            if status == "healthy":
+                healthy_count += 1
+            elif status == "unhealthy":
+                unhealthy_count += 1
+            else:
+                disabled_count += 1
+            
+            services.append({
+                "id": service_id,
+                "name": service_config.name,
+                "endpoint": service_config.endpoint or "N/A",
+                "transport": service_config.transport,
+                "enabled": service_config.enabled,
+                "healthy": is_healthy,
+                "lastChecked": "2024-01-01T00:00:00Z",  # TODO: Add real timestamps
+                "tags": service_config.tags or []
+            })
+        
+        return {
+            "services": services,
+            "summary": {
+                "total": len(services),
+                "healthy": healthy_count,
+                "unhealthy": unhealthy_count,
+                "disabled": disabled_count
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get services health: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get services health"
+        )
+
+
+@dashboard_router.get("/services", response_model=ServiceListResponse)
+async def list_services(request: Request):
+    """List all registered MCP services."""
+    try:
+        # Get registry directly from app state
+        registry = request.app.state.service_registry
+
         # Get all services from registry
         services = []
         for service_id, service_config in registry.services.items():
@@ -75,15 +191,13 @@ async def list_services(
                 service_id=service_id,
                 name=service_config.name,
                 description=service_config.description,
-                connection_type=service_config.transport,  # Use 'transport' not 'connection_type'
-                status="active"  # TODO: Add real status checking
+                connection_type=service_config.transport,
+                status="active"
             )
             services.append(service_info)
-        
+
         return ServiceListResponse(services=services)
-        
-    except HTTPException:
-        raise
+
     except Exception as e:
         logger.error(f"Failed to list services: {e}", exc_info=True)
         raise HTTPException(
@@ -93,20 +207,11 @@ async def list_services(
 
 
 @dashboard_router.post("/services", response_model=ServiceCreateResponse)
-async def create_service(
-    request: ServiceCreateRequest,
-    registry: ServiceRegistry = Depends(get_service_registry),
-    user: Optional[UserContext] = Depends(get_current_user)
-):
+async def create_service(request: ServiceCreateRequest, request_obj: Request):
     """Create a new MCP service configuration."""
     try:
-        # Validate authentication if required
-        if settings.ENABLE_AUTH and user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required"
-            )
-        
+        registry = request_obj.app.state.service_registry
+
         # Create service configuration
         service_id = await registry.register_service(
             name=request.name,
@@ -121,15 +226,13 @@ async def create_service(
             auth=request.auth,
             tags=request.tags
         )
-        
+
         return ServiceCreateResponse(
             id=service_id,
             status="created",
             message=f"Service '{request.name}' created successfully"
         )
-        
-    except HTTPException:
-        raise
+
     except Exception as e:
         logger.error(f"Failed to create service '{request.name}': {e}")
         raise HTTPException(
@@ -210,9 +313,6 @@ async def test_service(
         # Perform test based on transport type
         if request.transport == "http":
             # Test HTTP endpoint connectivity
-            import aiohttp
-            import time
-            
             start_time = time.time()
             timeout = aiohttp.ClientTimeout(total=request.timeout)
             
@@ -233,9 +333,6 @@ async def test_service(
         
         elif request.transport == "stdio":
             # Test STDIO command execution
-            import subprocess
-            import time
-            
             start_time = time.time()
             
             try:

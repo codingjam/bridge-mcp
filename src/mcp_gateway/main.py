@@ -183,11 +183,20 @@ def create_app() -> FastAPI:
     )
     
     # Add CORS middleware
+    logger.info(
+        "Configuring CORS middleware",
+        extra={
+            "cors_origins": settings.cors_origins,
+            "cors_origins_type": type(settings.cors_origins).__name__,
+            "cors_origins_count": len(settings.cors_origins) if settings.cors_origins else 0,
+            "raw_cors_origins": settings.CORS_ORIGINS
+        }
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=settings.CORS_ORIGINS,  # Use the field directly instead of property
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],
         expose_headers=["X-Request-ID"]
     )

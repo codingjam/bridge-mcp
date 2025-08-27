@@ -23,16 +23,29 @@ export interface ServiceHealth {
 }
 
 export interface Service {
-  id: string;
+  service_id: string;
   name: string;
   description: string;
-  endpoint: string;
+  connection_type: string;
+  status: string;
+}
+
+export interface ServiceListResponse {
+  services: Service[];
+}
+
+export interface CreateServiceRequest {
+  name: string;
+  description?: string;
   transport: 'http' | 'stdio';
-  enabled: boolean;
-  timeout: number;
-  tags: string[];
+  enabled?: boolean;
+  endpoint?: string;
+  timeout?: number;
+  health_check_path?: string;
   command?: string[];
-  health?: ServiceHealth;
+  working_directory?: string;
+  auth?: Record<string, any>;
+  tags?: string[];
 }
 
 export interface RateLimitStatus {
