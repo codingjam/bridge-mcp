@@ -9,10 +9,11 @@ import asyncio
 import logging
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from ..core.service_registry import ServiceRegistry
+from ..core.config import settings
 from ..auth.authentication_middleware import get_current_user
 from ..auth.models import UserContext
 
@@ -34,13 +35,23 @@ logger = logging.getLogger(__name__)
 dashboard_router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
-async def get_service_registry() -> ServiceRegistry:
+async def get_service_registry(request: Request) -> ServiceRegistry:
     """
-    Dependency injection for service registry
-    Import here to avoid circular dependency
+    Dependency injection for service registry from app state
     """
-    from mcp_gateway.main import get_service_registry as get_registry
-    return await get_registry()
+    if not hasattr(request.app.state, 'service_registry'):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service registry not initialized"
+        )
+    registry = request.app.state.service_registry
+    if registry is None:
+        print("DEBUG: service_registry is None in app.state")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service registry not initialized"
+        )
+    return registry
 
 
 @dashboard_router.get("/services", response_model=ServiceListResponse)
@@ -51,7 +62,7 @@ async def list_services(
     """List all registered MCP services."""
     try:
         # Validate authentication if required
-        if user is None:
+        if settings.ENABLE_AUTH and user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required"
@@ -90,7 +101,7 @@ async def create_service(
     """Create a new MCP service configuration."""
     try:
         # Validate authentication if required
-        if user is None:
+        if settings.ENABLE_AUTH and user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required"
@@ -136,7 +147,7 @@ async def delete_service(
     """Delete an MCP service configuration."""
     try:
         # Validate authentication if required
-        if user is None:
+        if settings.ENABLE_AUTH and user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required"
@@ -177,7 +188,7 @@ async def test_service(
     """Test connectivity to an MCP service."""
     try:
         # Validate authentication if required
-        if user is None:
+        if settings.ENABLE_AUTH and user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required"

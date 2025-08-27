@@ -22,23 +22,12 @@ from mcp_gateway.rl import RateLimitMiddleware, get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
-# Global service registry instance
-_service_registry: Optional[ServiceRegistry] = None
-
-
-async def get_service_registry() -> ServiceRegistry:
-    """Get the global service registry instance (for dependency injection)"""
-    global _service_registry
-    if _service_registry is None:
-        raise RuntimeError("Service registry not initialized")
-    return _service_registry
-
-
 async def create_service_registry() -> ServiceRegistry:
     """Create and initialize the service registry"""
     from pathlib import Path
     
     auth_config = settings.get_auth_config()
+    
     registry = ServiceRegistry(
         config_path=Path(settings.SERVICE_REGISTRY_FILE),
         auth_config=auth_config
@@ -60,9 +49,9 @@ async def lifespan(app: FastAPI):
     logger.info("Starting MCP Gateway...")
     
     # Initialize service registry
-    global _service_registry
     try:
-        _service_registry = await create_service_registry()
+        registry = await create_service_registry()
+        app.state.service_registry = registry
         logger.info("Service registry initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize service registry: {e}")
@@ -85,7 +74,8 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down MCP Gateway...")
-    _service_registry = None
+    if hasattr(app.state, 'service_registry'):
+        app.state.service_registry = None
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError):

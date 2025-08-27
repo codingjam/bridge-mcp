@@ -10,7 +10,7 @@ import asyncio
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, status
 from fastapi.responses import JSONResponse
 
 from ..mcp.client_wrapper import MCPClientWrapper
@@ -46,13 +46,22 @@ logger = get_logger(__name__)
 
 
 # Dependency injection functions - REUSE PATTERNS FROM routes.py
-async def get_service_registry() -> ServiceRegistry:
+async def get_service_registry(request: Request) -> ServiceRegistry:
     """
-    Dependency injection for service registry
-    Import here to avoid circular dependency
+    Dependency injection for service registry from app state
     """
-    from mcp_gateway.main import get_service_registry as get_registry
-    return await get_registry()
+    if not hasattr(request.app.state, 'service_registry'):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service registry not initialized"
+        )
+    registry = request.app.state.service_registry
+    if registry is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service registry not initialized"
+        )
+    return registry
 
 
 async def get_obo_service() -> Optional[OBOTokenService]:
@@ -80,36 +89,44 @@ async def get_proxy_service(
     )
 
 
-# Global MCP client instance
-_mcp_client: Optional[MCPClientWrapper] = None
-_mcp_adapter: Optional[ServiceRegistryMCPAdapter] = None
+# Global MCP client instance - Remove global variables
+# _mcp_client: Optional[MCPClientWrapper] = None
+# _mcp_adapter: Optional[ServiceRegistryMCPAdapter] = None
 
 
 # Create MCP router
 mcp_router = APIRouter(prefix="/mcp", tags=["MCP Client"])
 
 
-async def get_mcp_client() -> MCPClientWrapper:
-    """Get or create MCP client instance."""
-    global _mcp_client
-    if _mcp_client is None:
+async def get_mcp_client(request: Request) -> MCPClientWrapper:
+    """Get or create MCP client instance from app state."""
+    if not hasattr(request.app.state, 'mcp_client'):
         # Get service registry for circuit breaker manager
-        service_registry = await get_service_registry()
-        _mcp_client = MCPClientWrapper(
+        service_registry = request.app.state.service_registry
+        if not service_registry:
+            raise HTTPException(
+                status_code=503,
+                detail="Service registry not initialized"
+            )
+        mcp_client = MCPClientWrapper(
             circuit_breaker_manager=service_registry.circuit_breaker_manager
         )
-        # Initialize the client (start session manager)
-        await _mcp_client.__aenter__()
-    return _mcp_client
+        await mcp_client.__aenter__()
+        request.app.state.mcp_client = mcp_client
+    return request.app.state.mcp_client
 
 
-async def get_mcp_adapter() -> ServiceRegistryMCPAdapter:
-    """Get or create MCP adapter instance."""
-    global _mcp_adapter
-    if _mcp_adapter is None:
-        service_registry = await get_service_registry()
-        _mcp_adapter = ServiceRegistryMCPAdapter(service_registry)
-    return _mcp_adapter
+async def get_mcp_adapter(request: Request) -> ServiceRegistryMCPAdapter:
+    """Get or create MCP adapter instance from app state."""
+    if not hasattr(request.app.state, 'mcp_adapter'):
+        service_registry = request.app.state.service_registry
+        if not service_registry:
+            raise HTTPException(
+                status_code=503,
+                detail="Service registry not initialized"
+            )
+        request.app.state.mcp_adapter = ServiceRegistryMCPAdapter(service_registry)
+    return request.app.state.mcp_adapter
 
 
 # Simplified proxy endpoint for Agent Integration Guide compatibility
@@ -201,7 +218,7 @@ async def mcp_simple_proxy(
         # Route request based on method
         if method == "tools/list":
             # Handle tool listing
-            client = await get_mcp_client()
+            client = await get_mcp_client(http_request)
             # Use existing session or create temporary one
             tools = await client.list_tools_direct(server_name, headers)
             return {
@@ -212,7 +229,7 @@ async def mcp_simple_proxy(
             
         elif method == "tools/call":
             # Handle tool execution
-            client = await get_mcp_client()
+            client = await get_mcp_client(http_request)
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
             
@@ -227,7 +244,7 @@ async def mcp_simple_proxy(
             
         else:
             # Generic JSON-RPC forwarding
-            adapter = await get_mcp_adapter()
+            adapter = await get_mcp_adapter(http_request)
             response = await adapter.forward_request(
                 server_name=server_name,
                 request_data=request_data,
@@ -387,6 +404,7 @@ async def connect_server(
 @mcp_router.get("/sessions/{session_id}/tools", response_model=ListToolsResponse)
 async def list_tools(
     session_id: str,
+    http_request: Request,
     user: Optional[UserContext] = Depends(get_current_user),
     client: MCPClientWrapper = Depends(get_mcp_client)
 ):
@@ -433,6 +451,7 @@ async def list_tools(
 async def call_tool(
     session_id: str,
     request: CallToolRequest,
+    http_request: Request,
     user: Optional[UserContext] = Depends(get_current_user),
     client: MCPClientWrapper = Depends(get_mcp_client)
 ):
