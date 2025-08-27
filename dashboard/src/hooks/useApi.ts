@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
 import type {
   Service,
+  ServiceListResponse,
+  CreateServiceRequest,
   RateLimitStatus,
   RateLimitConfig,
   RecentActivity,
@@ -51,7 +53,7 @@ export const useServices = () => {
     queryKey: ['services'],
     queryFn: async (): Promise<Service[]> => {
       const { data } = await apiClient.get('/dashboard/services');
-      return data;
+      return data.services || [];
     },
   });
 };
@@ -60,24 +62,8 @@ export const useCreateService = () => {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: async (service: Omit<Service, 'id'>): Promise<Service> => {
+    mutationFn: async (service: CreateServiceRequest): Promise<{ id: string; status: string; message: string }> => {
       const { data } = await apiClient.post('/dashboard/services', service);
-      return data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['services'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard', 'services', 'health'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard', 'overview'] });
-    },
-  });
-};
-
-export const useUpdateService = () => {
-  const queryClient = useQueryClient();
-  
-  return useMutation({
-    mutationFn: async ({ id, ...service }: Service): Promise<Service> => {
-      const { data } = await apiClient.put(`/dashboard/services/${id}`, service);
       return data;
     },
     onSuccess: () => {
@@ -92,8 +78,9 @@ export const useDeleteService = () => {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: async (serviceId: string): Promise<void> => {
-      await apiClient.delete(`/dashboard/services/${serviceId}`);
+    mutationFn: async (serviceId: string): Promise<{ id: string; status: string; message: string }> => {
+      const { data } = await apiClient.delete(`/dashboard/services/${serviceId}`);
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services'] });
@@ -105,8 +92,8 @@ export const useDeleteService = () => {
 
 export const useTestService = () => {
   return useMutation({
-    mutationFn: async (serviceId: string): Promise<{ success: boolean; message: string; responseTime?: number }> => {
-      const { data } = await apiClient.post(`/dashboard/services/${serviceId}/test`);
+    mutationFn: async (testRequest: { transport: 'http' | 'stdio'; endpoint?: string; command?: string[]; timeout?: number }): Promise<{ success: boolean; message: string; responseTime?: number; details?: any }> => {
+      const { data } = await apiClient.post('/dashboard/services/test', testRequest);
       return data;
     },
   });

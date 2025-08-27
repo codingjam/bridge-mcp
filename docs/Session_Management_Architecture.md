@@ -305,6 +305,43 @@ result = requests.post(
 )
 ```
 
+### 4. Session Creation Flow Diagram
+
+The following flowchart illustrates the detailed session creation process:
+
+```
+POST /api/v1/mcp/servers/connect
+             ↓
+    SessionManager.create_session()
+             ↓
+  MCPTransportFactory.create_transport(cfg)
+             ↓
+    normalize URL (ensure /mcp/)
+             ↓
+transport_cm.__aenter__() // streamablehttp_client
+             ↓
+      ClientSession.__aenter__()
+             ↓
+  ClientSession.initialize() // 30s timeout
+             ↓
+          init OK? ────────┐
+             ↓            │
+           YES            NO
+             ↓            ↓
+    store in pools:       │
+    - sessions           │
+    - transports         │
+    - session_info       │
+             ↓            ↓
+   start heartbeat task  │
+             ↓            ↓
+     return session_id    │
+                          ↓
+                ClientSession.__aexit__()
+                transport_cm.__aexit__()
+                     raise exception
+```
+
 ## Future Enhancements
 
 ### Planned Features

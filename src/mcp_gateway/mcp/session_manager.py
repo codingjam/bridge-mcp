@@ -17,6 +17,7 @@ from mcp.types import CreateMessageRequestParams, CreateMessageResult
 from .transport_factory import MCPTransportFactory
 from .exceptions import MCPSessionError, MCPConnectionError
 from ..core.logging import get_logger
+from ..circuit_breaker import CircuitBreakerManager, CircuitBreakerOpenError
 
 
 logger = get_logger(__name__)
@@ -50,7 +51,7 @@ class MCPSessionInfo:
 class MCPSessionManager:
     """Manages MCP client sessions with connection pooling and error recovery."""
     
-    def __init__(self, max_sessions: int = 100):
+    def __init__(self, max_sessions: int = 100, circuit_breaker_manager: Optional[CircuitBreakerManager] = None):
         self._sessions: Dict[str, ClientSession] = {}
         self._session_info: Dict[str, MCPSessionInfo] = {}
         self._session_configs: Dict[str, MCPSessionConfig] = {}
@@ -59,6 +60,9 @@ class MCPSessionManager:
         self._cleanup_task: Optional[asyncio.Task] = None
         self._heartbeat_tasks: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
+        
+        # Circuit breaker integration for resilient session management
+        self.circuit_breaker_manager = circuit_breaker_manager or CircuitBreakerManager()
         
     async def start(self):
         """Start the session manager."""
@@ -98,7 +102,7 @@ class MCPSessionManager:
         sampling_callback: Optional[callable] = None
     ) -> str:
         """
-        Create a new MCP session.
+        Create a new MCP session with circuit breaker protection.
         
         Args:
             config: Session configuration
@@ -109,7 +113,21 @@ class MCPSessionManager:
             
         Raises:
             MCPSessionError: If session creation fails
+            CircuitBreakerOpenError: If circuit breaker is open for this server
         """
+        # Check circuit breaker before attempting session creation
+        server_key = self._get_server_key(config)
+        breaker = await self.circuit_breaker_manager.get_breaker(server_key)
+        
+        if await breaker.is_open():
+            stats = breaker.get_stats()
+            raise CircuitBreakerOpenError(
+                f"Cannot create session - circuit breaker is open for server: {config.server_name}",
+                server_key=server_key,
+                cooldown_remaining=stats["cooldown_remaining_seconds"],
+                failure_rate=stats["failure_rate"]
+            )
+        
         async with self._lock:
             if len(self._sessions) >= self._max_sessions:
                 raise MCPSessionError(
@@ -141,8 +159,12 @@ class MCPSessionManager:
             
             logger.debug(f"Creating transport for session {config.session_id}")
             
-            # Create transport context manager but don't enter it yet
-            transport_cm = MCPTransportFactory.create_transport(config.transport_config)
+            # Use circuit breaker for transport creation
+            transport_cm = await self.circuit_breaker_manager.check_and_call(
+                server_key,
+                self._create_transport_with_breaker,
+                config.transport_config
+            )
             
             try:
                 # Manually enter the transport context to keep it alive
@@ -160,9 +182,14 @@ class MCPSessionManager:
                 await session.__aenter__()
                 
                 logger.debug(f"Initializing MCP session {config.session_id}")
-                # Initialize the session with timeout
+                # Initialize the session with timeout and circuit breaker protection
                 try:
-                    await asyncio.wait_for(session.initialize(), timeout=30.0)
+                    await self.circuit_breaker_manager.check_and_call(
+                        server_key,
+                        self._initialize_session_with_timeout,
+                        session,
+                        config.session_id
+                    )
                     logger.info(f"MCP session {config.session_id} initialized successfully")
                 except asyncio.TimeoutError:
                     logger.error(f"MCP session {config.session_id} initialization timed out after 30 seconds")
@@ -214,6 +241,10 @@ class MCPSessionManager:
                     pass
                 raise
                 
+        except CircuitBreakerOpenError:
+            # Don't wrap circuit breaker errors
+            await self._cleanup_failed_session(config.session_id)
+            raise
         except Exception as e:
             # Cleanup on failure
             await self._cleanup_failed_session(config.session_id)
@@ -336,11 +367,13 @@ class MCPSessionManager:
             await self.close_session(session_id)
 
     async def _heartbeat_loop(self, session_id: str):
-        """Heartbeat loop for a specific session."""
+        """Heartbeat loop for a specific session with circuit breaker integration."""
         config = self._session_configs.get(session_id)
         if not config:
             return
-            
+        
+        server_key = self._get_server_key(config)
+        
         try:
             while True:
                 await asyncio.sleep(config.heartbeat_interval)
@@ -354,13 +387,22 @@ class MCPSessionManager:
                     info = self._session_info[session_id]
                 
                 try:
-                    # Simple ping by listing tools (lightweight operation)
-                    await session.list_tools()
+                    # Use circuit breaker for heartbeat operations
+                    await self.circuit_breaker_manager.check_and_call(
+                        server_key,
+                        self._perform_heartbeat,
+                        session
+                    )
+                    
                     async with self._lock:
                         info.last_activity = datetime.utcnow()
                         if info.status == "error":
                             info.status = "active"
                             
+                except CircuitBreakerOpenError:
+                    logger.error(f"Circuit breaker open for {server_key}, closing session {session_id}")
+                    await self.close_session(session_id)
+                    break
                 except Exception as e:
                     logger.warning(f"Heartbeat failed for session {session_id}: {e}")
                     async with self._lock:
@@ -377,6 +419,219 @@ class MCPSessionManager:
             pass
         except Exception as e:
             logger.error(f"Error in heartbeat loop for session {session_id}: {e}")
+
+    async def _create_transport_with_breaker(self, transport_config: Dict[str, Any]):
+        """Create transport with circuit breaker protection."""
+        return MCPTransportFactory.create_transport(transport_config)
+    
+    async def _initialize_session_with_timeout(self, session: ClientSession, session_id: str):
+        """Initialize session with timeout protection."""
+        await asyncio.wait_for(session.initialize(), timeout=30.0)
+    
+    async def _perform_heartbeat(self, session: ClientSession):
+        """Perform heartbeat operation (list tools as lightweight check)."""
+        await session.list_tools()
+    
+    def _get_server_key(self, config: MCPSessionConfig) -> str:
+        """Generate a unique key for server identification in circuit breaker."""
+        # Use server name as the key for circuit breaker grouping
+        return config.server_name
+
+    async def call_tool_with_breaker(
+        self,
+        session_id: str,
+        tool_name: str,
+        arguments: Dict[str, Any]
+    ) -> Any:
+        """
+        Call a tool with circuit breaker protection.
+        
+        Args:
+            session_id: Session identifier
+            tool_name: Name of the tool to call
+            arguments: Tool arguments
+            
+        Returns:
+            Tool execution result
+            
+        Raises:
+            MCPSessionError: If session not found
+            CircuitBreakerOpenError: If circuit breaker is open
+        """
+        session_info = self._session_info.get(session_id)
+        if not session_info:
+            raise MCPSessionError(
+                f"Session {session_id} not found",
+                session_id=session_id,
+                operation="call_tool"
+            )
+        
+        config = self._session_configs.get(session_id)
+        if not config:
+            raise MCPSessionError(
+                f"Session configuration not found for {session_id}",
+                session_id=session_id,
+                operation="call_tool"
+            )
+        
+        server_key = self._get_server_key(config)
+        session = self._sessions[session_id]
+        
+        # Use circuit breaker manager's check_and_call for tool execution
+        return await self.circuit_breaker_manager.check_and_call(
+            server_key,
+            self._call_tool_internal,
+            session,
+            tool_name,
+            arguments
+        )
+    
+    async def _call_tool_internal(
+        self,
+        session: ClientSession,
+        tool_name: str,
+        arguments: Dict[str, Any]
+    ) -> Any:
+        """Internal method for calling tools on MCP session."""
+        result = await session.call_tool(tool_name, arguments)
+        return result
+
+    async def list_tools_with_breaker(self, session_id: str):
+        """List tools with circuit breaker protection."""
+        session_info = self._session_info.get(session_id)
+        if not session_info:
+            raise MCPSessionError(
+                f"Session {session_id} not found",
+                session_id=session_id,
+                operation="list_tools"
+            )
+        
+        config = self._session_configs.get(session_id)
+        if not config:
+            raise MCPSessionError(
+                f"Session configuration not found for {session_id}",
+                session_id=session_id,
+                operation="list_tools"
+            )
+        
+        server_key = self._get_server_key(config)
+        session = self._sessions[session_id]
+        
+        return await self.circuit_breaker_manager.check_and_call(
+            server_key,
+            session.list_tools
+        )
+
+    async def list_resources_with_breaker(self, session_id: str):
+        """List resources with circuit breaker protection."""
+        session_info = self._session_info.get(session_id)
+        if not session_info:
+            raise MCPSessionError(
+                f"Session {session_id} not found",
+                session_id=session_id,
+                operation="list_resources"
+            )
+        
+        config = self._session_configs.get(session_id)
+        if not config:
+            raise MCPSessionError(
+                f"Session configuration not found for {session_id}",
+                session_id=session_id,
+                operation="list_resources"
+            )
+        
+        server_key = self._get_server_key(config)
+        session = self._sessions[session_id]
+        
+        return await self.circuit_breaker_manager.check_and_call(
+            server_key,
+            session.list_resources
+        )
+
+    async def read_resource_with_breaker(self, session_id: str, uri):
+        """Read resource with circuit breaker protection."""
+        session_info = self._session_info.get(session_id)
+        if not session_info:
+            raise MCPSessionError(
+                f"Session {session_id} not found",
+                session_id=session_id,
+                operation="read_resource"
+            )
+        
+        config = self._session_configs.get(session_id)
+        if not config:
+            raise MCPSessionError(
+                f"Session configuration not found for {session_id}",
+                session_id=session_id,
+                operation="read_resource"
+            )
+        
+        server_key = self._get_server_key(config)
+        session = self._sessions[session_id]
+        
+        return await self.circuit_breaker_manager.check_and_call(
+            server_key,
+            session.read_resource,
+            uri
+        )
+
+    async def list_prompts_with_breaker(self, session_id: str):
+        """List prompts with circuit breaker protection."""
+        session_info = self._session_info.get(session_id)
+        if not session_info:
+            raise MCPSessionError(
+                f"Session {session_id} not found",
+                session_id=session_id,
+                operation="list_prompts"
+            )
+        
+        config = self._session_configs.get(session_id)
+        if not config:
+            raise MCPSessionError(
+                f"Session configuration not found for {session_id}",
+                session_id=session_id,
+                operation="list_prompts"
+            )
+        
+        server_key = self._get_server_key(config)
+        session = self._sessions[session_id]
+        
+        return await self.circuit_breaker_manager.check_and_call(
+            server_key,
+            session.list_prompts
+        )
+
+    async def get_prompt_with_breaker(self, session_id: str, prompt_name: str, arguments: Optional[Dict[str, str]] = None):
+        """Get prompt with circuit breaker protection."""
+        session_info = self._session_info.get(session_id)
+        if not session_info:
+            raise MCPSessionError(
+                f"Session {session_id} not found",
+                session_id=session_id,
+                operation="get_prompt"
+            )
+        
+        config = self._session_configs.get(session_id)
+        if not config:
+            raise MCPSessionError(
+                f"Session configuration not found for {session_id}",
+                session_id=session_id,
+                operation="get_prompt"
+            )
+        
+        server_key = self._get_server_key(config)
+        session = self._sessions[session_id]
+        
+        return await self.circuit_breaker_manager.check_and_call(
+            server_key,
+            session.get_prompt,
+            name=prompt_name,
+            arguments=arguments
+        )
+
+    async def get_circuit_breaker_stats(self) -> Dict[str, Any]:
+        """Get circuit breaker statistics for monitoring."""
+        return await self.circuit_breaker_manager.get_manager_stats()
 
 
 # Sampling callback helper function

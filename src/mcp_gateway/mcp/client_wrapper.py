@@ -41,11 +41,17 @@ class MCPClientWrapper:
     def __init__(
         self,
         session_manager: Optional[MCPSessionManager] = None,
+        circuit_breaker_manager=None,
         default_timeout: float = 30.0,
         max_retries: int = 3,
         retry_delay: float = 1.0
     ):
-        self._session_manager = session_manager or MCPSessionManager()
+        # Import here to avoid circular imports
+        from ..circuit_breaker.manager import CircuitBreakerManager
+        
+        self._session_manager = session_manager or MCPSessionManager(
+            circuit_breaker_manager=circuit_breaker_manager or CircuitBreakerManager()
+        )
         self._default_timeout = default_timeout
         self._max_retries = max_retries
         self._retry_delay = retry_delay
@@ -126,7 +132,7 @@ class MCPClientWrapper:
 
     async def list_tools(self, session_id: str) -> List[Tool]:
         """
-        List available tools from an MCP server.
+        List available tools from an MCP server with circuit breaker protection.
         
         Args:
             session_id: Session ID
@@ -136,10 +142,10 @@ class MCPClientWrapper:
             
         Raises:
             MCPClientError: If operation fails
+            CircuitBreakerOpenError: If circuit breaker is open
         """
-        session = await self._get_session(session_id)
         try:
-            result = await session.list_tools()
+            result = await self._session_manager.list_tools_with_breaker(session_id)
             return result.tools
         except Exception as e:
             raise MCPClientError(
@@ -154,7 +160,7 @@ class MCPClientWrapper:
         arguments: Optional[Dict[str, Any]] = None
     ) -> CallToolResult:
         """
-        Call a tool on an MCP server.
+        Call a tool on an MCP server with circuit breaker protection.
         
         Args:
             session_id: Session ID
@@ -166,14 +172,12 @@ class MCPClientWrapper:
             
         Raises:
             MCPClientError: If tool call fails
+            CircuitBreakerOpenError: If circuit breaker is open
         """
-        session = await self._get_session(session_id)
         try:
-            result = await session.call_tool(
-                name=tool_name,
-                arguments=arguments or {}
+            return await self._session_manager.call_tool_with_breaker(
+                session_id, tool_name, arguments or {}
             )
-            return result
         except Exception as e:
             raise MCPClientError(
                 f"Failed to call tool {tool_name}: {str(e)}",
@@ -186,7 +190,7 @@ class MCPClientWrapper:
 
     async def list_resources(self, session_id: str) -> List[Resource]:
         """
-        List available resources from an MCP server.
+        List available resources from an MCP server with circuit breaker protection.
         
         Args:
             session_id: Session ID
@@ -196,10 +200,10 @@ class MCPClientWrapper:
             
         Raises:
             MCPClientError: If operation fails
+            CircuitBreakerOpenError: If circuit breaker is open
         """
-        session = await self._get_session(session_id)
         try:
-            result = await session.list_resources()
+            result = await self._session_manager.list_resources_with_breaker(session_id)
             return result.resources
         except Exception as e:
             raise MCPClientError(
@@ -213,7 +217,7 @@ class MCPClientWrapper:
         uri: Union[str, AnyUrl]
     ) -> ReadResourceResult:
         """
-        Read a resource from an MCP server.
+        Read a resource from an MCP server with circuit breaker protection.
         
         Args:
             session_id: Session ID
@@ -224,13 +228,12 @@ class MCPClientWrapper:
             
         Raises:
             MCPClientError: If resource read fails
+            CircuitBreakerOpenError: If circuit breaker is open
         """
-        session = await self._get_session(session_id)
         try:
             if isinstance(uri, str):
                 uri = AnyUrl(uri)
-            result = await session.read_resource(uri)
-            return result
+            return await self._session_manager.read_resource_with_breaker(session_id, uri)
         except Exception as e:
             raise MCPClientError(
                 f"Failed to read resource {uri}: {str(e)}",
@@ -242,7 +245,7 @@ class MCPClientWrapper:
 
     async def list_prompts(self, session_id: str) -> List[Prompt]:
         """
-        List available prompts from an MCP server.
+        List available prompts from an MCP server with circuit breaker protection.
         
         Args:
             session_id: Session ID
@@ -252,10 +255,10 @@ class MCPClientWrapper:
             
         Raises:
             MCPClientError: If operation fails
+            CircuitBreakerOpenError: If circuit breaker is open
         """
-        session = await self._get_session(session_id)
         try:
-            result = await session.list_prompts()
+            result = await self._session_manager.list_prompts_with_breaker(session_id)
             return result.prompts
         except Exception as e:
             raise MCPClientError(
@@ -270,7 +273,7 @@ class MCPClientWrapper:
         arguments: Optional[Dict[str, str]] = None
     ) -> GetPromptResult:
         """
-        Get a prompt from an MCP server.
+        Get a prompt from an MCP server with circuit breaker protection.
         
         Args:
             session_id: Session ID
@@ -282,14 +285,12 @@ class MCPClientWrapper:
             
         Raises:
             MCPClientError: If prompt retrieval fails
+            CircuitBreakerOpenError: If circuit breaker is open
         """
-        session = await self._get_session(session_id)
         try:
-            result = await session.get_prompt(
-                name=prompt_name,
-                arguments=arguments
+            return await self._session_manager.get_prompt_with_breaker(
+                session_id, prompt_name, arguments
             )
-            return result
         except Exception as e:
             raise MCPClientError(
                 f"Failed to get prompt {prompt_name}: {str(e)}",
@@ -318,24 +319,23 @@ class MCPClientWrapper:
             )
         
         # Get capabilities and server details
-        session = await self._get_session(session_id)
         try:
-            # Try to get server capabilities
+            # Try to get server capabilities using circuit breaker protected methods
             capabilities = {}
             try:
-                tools = await session.list_tools()
+                tools = await self._session_manager.list_tools_with_breaker(session_id)
                 capabilities["tools"] = len(tools.tools)
             except:
                 capabilities["tools"] = 0
                 
             try:
-                resources = await session.list_resources()
+                resources = await self._session_manager.list_resources_with_breaker(session_id)
                 capabilities["resources"] = len(resources.resources)
             except:
                 capabilities["resources"] = 0
                 
             try:
-                prompts = await session.list_prompts()
+                prompts = await self._session_manager.list_prompts_with_breaker(session_id)
                 capabilities["prompts"] = len(prompts.prompts)
             except:
                 capabilities["prompts"] = 0
@@ -378,7 +378,7 @@ class MCPClientWrapper:
 
     async def health_check(self, session_id: str) -> bool:
         """
-        Perform a health check on an MCP session.
+        Perform a health check on an MCP session with circuit breaker protection.
         
         Args:
             session_id: Session ID to check
@@ -387,9 +387,8 @@ class MCPClientWrapper:
             True if session is healthy, False otherwise
         """
         try:
-            session = await self._get_session(session_id)
-            # Simple health check by listing tools
-            await session.list_tools()
+            # Use circuit breaker protected method for health check
+            await self._session_manager.list_tools_with_breaker(session_id)
             return True
         except Exception:
             return False
