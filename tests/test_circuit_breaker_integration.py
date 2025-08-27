@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.mcp_gateway.circuit_breaker.exceptions import CircuitBreakerOpenError
 from src.mcp_gateway.circuit_breaker.manager import CircuitBreakerManager
+from src.mcp_gateway.circuit_breaker.breaker import CircuitBreakerState
 from src.mcp_gateway.mcp.session_manager import MCPSessionManager, MCPSessionConfig
 from src.mcp_gateway.mcp.client_wrapper import MCPClientWrapper
 from src.mcp_gateway.core.service_registry import ServiceRegistry
@@ -86,13 +87,19 @@ class TestCircuitBreakerIntegration:
         
         # Manually trigger failures to open the circuit
         for _ in range(breaker.config.failure_threshold + 1):
-            try:
-                await breaker.call(lambda: asyncio.create_task(self._failing_operation()))
-            except:
-                pass
+            # Simulate the proper circuit breaker workflow
+            if await breaker.should_allow_call():
+                try:
+                    await self._failing_operation()
+                    await breaker.record_success()
+                except Exception as e:
+                    await breaker.record_failure(e)
+            else:
+                # Circuit is already open
+                break
         
         # Circuit should now be open
-        assert breaker.state == "OPEN"
+        assert breaker.state == CircuitBreakerState.OPEN
         
         # Further calls should raise CircuitBreakerOpenError
         with pytest.raises(CircuitBreakerOpenError):
