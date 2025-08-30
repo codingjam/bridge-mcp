@@ -117,12 +117,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not user_id:
             user_id = request.headers.get('X-User-Id')
         
+        # If still no user_id, check if authentication is disabled and use fallback
         if not user_id:
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=400,
-                detail="user_id missing - not found in request.state.user_id or X-User-Id header"
-            )
+            from mcp_gateway.core.config import get_settings
+            settings = get_settings()
+            if not settings.ENABLE_AUTH:
+                # When auth is disabled, use a fallback user_id for rate limiting
+                user_id = "anonymous_user"
+                logger.debug("Using fallback user_id for rate limiting when auth is disabled")
+            else:
+                from fastapi import HTTPException
+                raise HTTPException(
+                    status_code=400,
+                    detail="user_id missing - not found in request.state.user_id or X-User-Id header"
+                )
         
         # Extract service_id from URL path: /api/v1/mcp/{service_id}/call
         path_parts = request.url.path.split('/')

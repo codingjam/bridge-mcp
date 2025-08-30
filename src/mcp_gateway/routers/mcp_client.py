@@ -108,9 +108,16 @@ async def get_mcp_client(request: Request) -> MCPClientWrapper:
                 status_code=503,
                 detail="Service registry not initialized"
             )
+        
+        # Create MCP client with just the circuit breaker manager
+        # Let it create its own session manager
         mcp_client = MCPClientWrapper(
             circuit_breaker_manager=service_registry.circuit_breaker_manager
         )
+        
+        # Store service registry reference for adapter access
+        mcp_client._service_registry = service_registry
+        
         await mcp_client.__aenter__()
         request.app.state.mcp_client = mcp_client
     return request.app.state.mcp_client
@@ -217,9 +224,8 @@ async def mcp_simple_proxy(
         
         # Route request based on method
         if method == "tools/list":
-            # Handle tool listing
+            # Handle tool listing using direct method
             client = await get_mcp_client(http_request)
-            # Use existing session or create temporary one
             tools = await client.list_tools_direct(server_name, headers)
             return {
                 "jsonrpc": "2.0",
@@ -228,19 +234,127 @@ async def mcp_simple_proxy(
             }
             
         elif method == "tools/call":
-            # Handle tool execution
+            # Handle tool execution with optional SSE streaming
             client = await get_mcp_client(http_request)
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
+
+            if not tool_name:
+                raise HTTPException(status_code=400, detail="Tool name required")
+
+            # Check for streaming intent through multiple channels
+            # 1. Query parameter: ?stream=true
+            qp_stream = http_request.query_params.get("stream", "").lower() in ("1", "true", "yes")
             
-            result = await client.call_tool_direct(
-                server_name, tool_name, arguments, headers
+            # 2. JSON-RPC params: "stream": true
+            param_stream = params.get("stream") is True
+            
+            # 3. Accept header: Accept: text/event-stream
+            accept_stream = "text/event-stream" in http_request.headers.get("accept", "")
+            
+            # Enable streaming if any trigger is active
+            want_stream = qp_stream or param_stream or accept_stream
+
+            if not want_stream:
+                # Standard non-streaming path (existing behavior)
+                result = await client.call_tool_direct(
+                    server_name, tool_name, arguments, headers
+                )
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_data.get("id"),
+                    "result": result
+                }
+
+            # SSE Streaming path - return incremental results as Server-Sent Events
+            from fastapi.responses import StreamingResponse
+            import json
+            import time
+            import asyncio
+
+            correlation_id = request_data.get("id")
+            start_time = time.perf_counter()
+
+            async def event_stream():
+                """
+                Generate SSE frames for streaming tool call results.
+                Each chunk is wrapped in a JSON-RPC style envelope.
+                """
+                first_chunk = True
+                try:
+                    logger.info(f"Starting SSE stream for tool '{tool_name}' on server '{server_name}'")
+                    
+                    # Stream chunks from the MCP server
+                    async for chunk in client.stream_tool_call_direct(
+                        server_name, tool_name, arguments, headers
+                    ):
+                        # Flatten the chunk structure - extract content from nested wrapper
+                        chunk_content = chunk.get("chunk", {}) if isinstance(chunk, dict) else chunk
+                        is_final = chunk.get("final", False) if isinstance(chunk, dict) else False
+                        
+                        # Create flattened JSON-RPC style frame
+                        frame = {
+                            "jsonrpc": "2.0",
+                            "id": correlation_id,
+                            "stream": chunk_content,
+                            "final": is_final,
+                            "first": first_chunk,
+                            "elapsed_ms": int((time.perf_counter() - start_time) * 1000),
+                        }
+                        first_chunk = False
+                        
+                        # Emit SSE data frame
+                        yield f"data: {json.dumps(frame, ensure_ascii=False)}\n\n"
+                    
+                    # Emit completion event
+                    yield f"event: end\ndata: {{\"id\":\"{correlation_id}\"}}\n\n"
+                    logger.info(f"SSE stream completed for tool '{tool_name}' on server '{server_name}'")
+                    
+                except asyncio.CancelledError:
+                    # Client disconnected - log and cleanup
+                    logger.debug(
+                        f"SSE client disconnected during tool call", 
+                        extra={
+                            "tool": tool_name, 
+                            "server": server_name,
+                            "correlation_id": correlation_id,
+                            "elapsed_ms": int((time.perf_counter() - start_time) * 1000)
+                        }
+                    )
+                    # Note: Session cleanup will be handled by the client wrapper's session manager
+                    raise
+                except Exception as e:
+                    # Error during streaming - emit error event then stop
+                    logger.error(
+                        f"SSE stream error for tool '{tool_name}' on server '{server_name}': {e}",
+                        extra={
+                            "tool": tool_name,
+                            "server": server_name, 
+                            "correlation_id": correlation_id,
+                            "elapsed_ms": int((time.perf_counter() - start_time) * 1000)
+                        }
+                    )
+                    error_frame = {
+                        "jsonrpc": "2.0",
+                        "id": correlation_id,
+                        "error": {
+                            "code": -32603,
+                            "message": "Stream error",
+                            "data": str(e)
+                        }
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_frame, ensure_ascii=False)}\n\n"
+
+            # Return streaming response with appropriate headers
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",           # Prevent caching
+                    "Connection": "keep-alive",            # Keep connection open
+                    "X-Accel-Buffering": "no",           # Disable nginx buffering
+                }
             )
-            return {
-                "jsonrpc": "2.0",
-                "id": request_data.get("id"),
-                "result": result
-            }
             
         else:
             # Generic JSON-RPC forwarding
