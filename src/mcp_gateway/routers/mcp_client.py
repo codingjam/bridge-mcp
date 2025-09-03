@@ -285,25 +285,19 @@ async def mcp_simple_proxy(
                     logger.info(f"Starting SSE stream for tool '{tool_name}' on server '{server_name}'")
                     
                     # Stream chunks from the MCP server
-                    async for chunk in client.stream_tool_call_direct(
+                    async for item in client.stream_tool_call_direct(
                         server_name, tool_name, arguments, headers
                     ):
-                        # Flatten the chunk structure - extract content from nested wrapper
-                        chunk_content = chunk.get("chunk", {}) if isinstance(chunk, dict) else chunk
-                        is_final = chunk.get("final", False) if isinstance(chunk, dict) else False
-                        
-                        # Create flattened JSON-RPC style frame
+                        # Normalized frame from wrapper: {final, payload, elapsed_ms, session_id}
                         frame = {
                             "jsonrpc": "2.0",
                             "id": correlation_id,
-                            "stream": chunk_content,
-                            "final": is_final,
+                            "stream": item.get("payload"),
+                            "final": bool(item.get("final")),
                             "first": first_chunk,
-                            "elapsed_ms": int((time.perf_counter() - start_time) * 1000),
+                            "elapsed_ms": item.get("elapsed_ms", int((time.perf_counter() - start_time) * 1000)),
                         }
                         first_chunk = False
-                        
-                        # Emit SSE data frame
                         yield f"data: {json.dumps(frame, ensure_ascii=False)}\n\n"
                     
                     # Emit completion event

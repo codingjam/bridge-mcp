@@ -578,122 +578,89 @@ class MCPClientWrapper:
         arguments: Dict[str, Any],
         headers: Optional[Dict[str, str]] = None
     ):
+        """Stream a tool call (ephemeral session) yielding normalized frames.
+
+        Yielded frame:
+            {"final": bool, "payload": dict, "elapsed_ms": int, "session_id": str}
         """
-        Stream tool call results from an MCP server using a temporary session.
-        Used by the SSE streaming endpoints for incremental results.
-        
-        Args:
-            server_name: Server name from services.yaml
-            tool_name: Name of the tool to call
-            arguments: Tool arguments
-            headers: Optional auth headers (Authorization, etc.)
-            
-        Yields:
-            Incremental tool execution chunks
-            
-        Raises:
-            MCPClientError: If tool call fails
-        """
-        # Get service adapter to create transport config
+        import time
+        start = time.perf_counter()
         adapter = await self._get_service_adapter()
-        
-        session_id = None
+        session_id: Optional[str] = None
         try:
-            # Create temporary session config
             session_config = adapter.get_session_config(
                 service_id=server_name,
                 session_id=f"stream_{server_name}_{asyncio.get_event_loop().time()}"
             )
-            
-            # Add auth headers to transport config if provided
             if headers:
-                if "headers" not in session_config.transport_config:
-                    session_config.transport_config["headers"] = {}
-                session_config.transport_config["headers"].update(headers)
-            
-            # Create temporary session
+                session_config.transport_config.setdefault("headers", {}).update(headers)
             session_id = await self._session_manager.create_session(
                 config=session_config,
                 sampling_callback=default_sampling_callback
             )
-            
-            # Get the underlying session to check for streaming capability
             session = await self._session_manager.get_session(session_id)
-            
-            # Check if the underlying session supports streaming
+
+            # Native streaming path
             if hasattr(session, "stream_call_tool"):
-                # Use native streaming if available
-                async for chunk in session.stream_call_tool(tool_name, arguments):
-                    yield chunk
-            else:
-                # Custom streaming: call the tool and check if result is a generator
-                logger.debug(f"Attempting custom streaming for {tool_name} on {server_name}")
-                
-                # Call the tool
-                result = await self._session_manager.call_tool_with_breaker(
-                    session_id, tool_name, arguments
-                )
-                
-                # Check if the result contains generator-like content
-                # This is a heuristic to detect when FastMCP returned a generator object as string
-                result_dict = result.model_dump() if hasattr(result, "model_dump") else result
-                
-                logger.debug(f"Tool result for {tool_name}: {result_dict}")
-                
-                # Check if this is the simulate_long_task tool - we know it's a streaming tool
-                if tool_name == "simulate_long_task":
-                    logger.info(f"Detected streaming tool {tool_name}, simulating progress chunks")
-                    
-                    # Parse arguments to determine steps and delay
-                    steps = arguments.get("steps", 5)
-                    delay_seconds = arguments.get("delay_seconds", 0.5)
-                    task_name = arguments.get("task", "streaming_task")
-                    
-                    # Simulate the progress chunks that the tool would have yielded
-                    import time
-                    start_time = time.perf_counter()
-                    
-                    for step in range(1, steps + 1):
-                        await asyncio.sleep(delay_seconds)
-                        yield {
-                            "final": False,
-                            "chunk": {
-                                "type": "progress",
-                                "task": task_name,
-                                "step": step,
-                                "total_steps": steps,
-                                "percent": round(step / steps * 100, 2),
-                                "message": f"Processing {task_name} ({step}/{steps})"
-                            }
-                        }
-                    
-                    # Final result chunk
-                    duration = time.perf_counter() - start_time
+                async for native_chunk in session.stream_call_tool(tool_name, arguments):
                     yield {
-                        "final": True,
-                        "chunk": {
-                            "type": "result",
-                            "task": task_name,
-                            "duration_seconds": round(duration, 2),
-                            "summary": f"Completed {task_name} in {round(duration, 2)}s with {steps} steps"
-                        }
+                        "final": False,
+                        "payload": native_chunk,
+                        "elapsed_ms": int((time.perf_counter() - start) * 1000),
+                        "session_id": session_id,
                     }
-                    return
-                
-                # Check if result indicates a generator (more generic detection)
-                content = result_dict.get("content", [])
-                if content and len(content) > 0:
-                    text_content = content[0].get("text", "")
-                    if "async_generator" in text_content:
-                        logger.warning(f"Tool {tool_name} appears to be a generator but not handled specifically")
-                
-                # Fallback: emit single chunk with final result
-                logger.debug(f"No streaming detected for {tool_name}, using single result")
                 yield {
                     "final": True,
-                    "result": result_dict
+                    "payload": {"type": "result_complete"},
+                    "elapsed_ms": int((time.perf_counter() - start) * 1000),
+                    "session_id": session_id,
                 }
-                
+                return
+
+            # Single call (simulate streaming for known tool)
+            result = await self._session_manager.call_tool_with_breaker(
+                session_id, tool_name, arguments
+            )
+            if tool_name == "simulate_long_task":
+                steps = arguments.get("steps", 5)
+                delay_seconds = arguments.get("delay_seconds", 0.5)
+                task_name = arguments.get("task", "streaming_task")
+                for step in range(1, steps + 1):
+                    await asyncio.sleep(delay_seconds)
+                    yield {
+                        "final": False,
+                        "payload": {
+                            "type": "progress",
+                            "task": task_name,
+                            "step": step,
+                            "total_steps": steps,
+                            "percent": round(step / steps * 100, 2),
+                            "message": f"Processing {task_name} ({step}/{steps})"
+                        },
+                        "elapsed_ms": int((time.perf_counter() - start) * 1000),
+                        "session_id": session_id,
+                    }
+                duration = time.perf_counter() - start
+                yield {
+                    "final": True,
+                    "payload": {
+                        "type": "result",
+                        "task": task_name,
+                        "duration_seconds": round(duration, 2),
+                        "summary": f"Completed {task_name} in {round(duration, 2)}s with {steps} steps"
+                    },
+                    "elapsed_ms": int((time.perf_counter() - start) * 1000),
+                    "session_id": session_id,
+                }
+                return
+
+            normalized = result.model_dump() if hasattr(result, "model_dump") else result
+            yield {
+                "final": True,
+                "payload": normalized,
+                "elapsed_ms": int((time.perf_counter() - start) * 1000),
+                "session_id": session_id,
+            }
         except Exception as e:
             raise MCPClientError(
                 f"Failed to stream tool {tool_name} on {server_name}: {str(e)}",
@@ -704,7 +671,6 @@ class MCPClientWrapper:
                 }
             ) from e
         finally:
-            # Clean up temporary session
             if session_id:
                 await self._session_manager.close_session(session_id)
 
